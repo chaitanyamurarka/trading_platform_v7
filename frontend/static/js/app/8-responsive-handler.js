@@ -194,6 +194,11 @@ class ResponsiveHandler {
         document.body.classList.toggle('desktop-view', width >= 1024);
         document.body.classList.toggle('landscape-view', width > height);
         document.body.classList.toggle('portrait-view', width <= height);
+
+        // --- NEW: Add classes based on vertical height for more granular control ---
+        document.body.classList.toggle('height-short', height < 600);
+        document.body.classList.toggle('height-medium', height >= 600 && height < 800);
+        document.body.classList.toggle('height-tall', height >= 800);
         
         // Update CSS custom properties
         document.documentElement.style.setProperty('--viewport-width', `${width}px`);
