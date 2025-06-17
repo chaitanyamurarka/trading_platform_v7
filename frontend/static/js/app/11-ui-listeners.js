@@ -39,6 +39,9 @@ export function setupUiListeners() {
 
     // Settings Modal Listeners
     setupSettingsModalListeners();
+    
+    // NEW: Add Sidebar Toggle Listener
+    setupSidebarToggleListener();
 }
 
 function setupSettingsModalListeners() {
@@ -60,4 +63,23 @@ function setupSettingsModalListeners() {
             elements.dataLegendElement.style.display = 'none';
         }
     });
+}
+
+// NEW: Function to handle sidebar toggling
+function setupSidebarToggleListener() {
+    if (elements.menuToggle && elements.sidebar && elements.sidebarOverlay) {
+        const toggleSidebar = (event) => {
+            // Log to the console for debugging
+            console.log('Sidebar toggle initiated by:', event.currentTarget);
+            
+            elements.sidebar.classList.toggle('open');
+            elements.sidebarOverlay.classList.toggle('hidden');
+        };
+
+        elements.menuToggle.addEventListener('click', toggleSidebar);
+        elements.sidebarOverlay.addEventListener('click', toggleSidebar);
+    } else {
+        // This will show an error in the console if the elements aren't found
+        console.error('Could not find all required elements for sidebar toggle functionality.');
+    }
 }

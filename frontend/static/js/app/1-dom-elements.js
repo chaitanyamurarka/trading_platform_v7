@@ -42,8 +42,13 @@ export const disableWicksInput = document.getElementById('setting-disable-wicks'
 
 export const showOHLCLegendToggle = document.getElementById('setting-show-ohlc-legend');
 
-// Add this to the existing exports:
 export const candleTypeSelect = document.getElementById('candle-type-select');
+
+// NEW: Add responsive sidebar elements
+export const menuToggle = document.getElementById('menu-toggle');
+export const sidebar = document.getElementById('sidebar');
+export const sidebarOverlay = document.getElementById('sidebar-overlay');
+
 
 // Utility function to check if an element exists
 export function elementExists(element) {
@@ -68,7 +73,11 @@ export function validateCriticalElements() {
         intervalSelect,
         startTimeInput,
         endTimeInput,
-        dataLegendElement
+        dataLegendElement,
+        // NEW: Add new elements to validation
+        menuToggle,
+        sidebar,
+        sidebarOverlay
     };
     
     const missingElements = [];

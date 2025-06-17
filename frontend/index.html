@@ -9,7 +9,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/main.css">
     
     <link rel="apple-touch-icon" sizes="180x180" href="/static/favicon_io/apple-touch-icon.png">
     <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon_io/favicon-32x32.png">
@@ -18,11 +18,12 @@
 </head>
 
 <body class="bg-base-200">
-    <div class="flex h-screen">
-        <aside class="flex flex-col bg-base-100 w-64 px-4 py-8">
+    <div id="sidebar-overlay" class="fixed inset-0 hidden"></div>
+
+    <div class="flex h-screen overflow-hidden">
+        <aside id="sidebar" class="flex flex-col bg-base-100 px-4 py-8">
             <h2 class="text-3xl font-semibold text-primary">EigenKor</h2>
             <div class="mt-8">
-                <!-- <h3 class="text-xs font-semibold uppercase text-gray-400">Main Controls</h3> -->
                 <div class="mt-4">
                     <div class="mb-4">
                         <label for="exchange" class="text-sm">Exchange</label>
@@ -70,59 +71,65 @@
             </div>
         </aside>
 
-        <main class="flex-1 flex flex-col">
-            <div class="flex items-center justify-between h-16 bg-base-100 px-4">
-                <div class="flex items-center">
-                    <div class="form-control flex flex-row items-center mr-4">
-                        <label for="live-toggle" class="label cursor-pointer">
-                        <span class="label-text mr-2">Live</span> 
-                        <input type="checkbox" id="live-toggle" class="toggle toggle-sm toggle-primary">
-                        </label>
-                    </div>
-                    <select id="timezone" class="select select-bordered select-sm mr-4">
-                        <option value="Etc/UTC">UTC</option>
-                        <option value="Europe/London">London</option>
-                        <option value="Europe/Paris">Paris</option>
-                        <option value="Europe/Berlin">Berlin</option>
-                        <option value="Europe/Moscow">Moscow</option>
-                        <option value="Asia/Dubai">Dubai</option>
-                        <option value="Asia/Kolkata">Kolkata</option>
-                        <option value="Asia/Singapore">Singapore</option>
-                        <option value="Asia/Hong_Kong">Hong Kong</option>
-                        <option value="Asia/Tokyo">Tokyo</option>
-                        <option value="Australia/Sydney">Sydney</option>
-                        <option value="America/New_York" selected>New York</option>
-                        <option value="America/Chicago">Chicago</option>
-                        <option value="America/Los_Angeles">Los Angeles</option>
-                        <option value="America/Toronto">Toronto</option>
-                        <option value="America/Sao_Paulo">Sao Paulo</option>
-                        <option value="Pacific/Honolulu">Honolulu</option>
-                    </select>
-                    <div class="join mr-4">
-                        <button id="scaling-auto-btn" class="btn btn-sm join-item btn-active" title="Automatic Scaling">Auto</button>
-                        <button id="scaling-linear-btn" class="btn btn-sm join-item" title="Linear Scaling">Linear</button>
-                    </div>
-                    <div class="form-control mr-4">
-                        <select id="candle-type-select" class="select select-bordered select-sm">
-                            <option value="regular" selected>Regular</option>
-                            <option value="heikin_ashi">Heikin Ashi</option>
-                        </select>
-                    </div>
+        <main id="main-content" class="flex-1 flex flex-col">
+            <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 p-2 h-auto md:h-16 md:flex-nowrap md:py-0 bg-base-100 border-b border-base-300">
+                <div class="flex items-center justify-between h-auto md:h-16 bg-base-100 px-4 border-b border-base-300">
                     
-                    <select id="chart-type" class="select select-bordered select-sm mr-4">
-                        <option value="candlestick" selected>Candlestick</option>
-                        <option value="bar">Bar</option>
-                    </select>
-                    <button id="screenshot-btn" class="btn btn-sm btn-ghost mr-4"><i class="fas fa-camera"></i></button>
-                    <button class="btn btn-sm btn-ghost" onclick="settings_modal.showModal()"><i class="fas fa-cog"></i></button>
-                </div>
-                <label class="swap swap-rotate" id="theme-toggle">
-                    <input type="checkbox" />
-                    <svg class="swap-on fill-current w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5.64,17l-.71.71a1,1,0,0,0,0,1.41,1,1,0,0,0,1.41,0l.71-.71A1,1,0,0,0,5.64,17ZM5,12a1,1,0,0,0-1-1H3a1,1,0,0,0,0,2H4A1,1,0,0,0,5,12Zm7-7a1,1,0,0,0,1-1V3a1,1,0,0,0-2,0V4A1,1,0,0,0,12,5ZM5.64,7.05a1,1,0,0,0,.7.29,1,1,0,0,0,.71-.29l.71-.71A1,1,0,0,0,6.34,4.93l-.71.71A1,1,0,0,0,5.64,7.05ZM18.36,16.95a1,1,0,0,0-.7-1.71H16.91a1,1,0,0,0,0,2h.75a1,1,0,0,0,.7-1.71ZM12,18a1,1,0,0,0-1,1v1a1,1,0,0,0,2,0V19A1,1,0,0,0,12,18Zm5.36-1.64a1,1,0,0,0-.71.29l-.71.71a1,1,0,1,0,1.41,1.41l.71-.71A1,1,0,0,0,17.36,16.36ZM20,11H19a1,1,0,0,0,0,2h1a1,1,0,0,0,0-2Z"/></svg>
-                    <svg class="swap-off fill-current w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21.64,13a1,1,0,0,0-1.05-.14,8.05,8.05,0,0,1-3.37.73A8.15,8.15,0,0,1,9.08,5.49a8.59,8.59,0,0,1,.25-2A1,1,0,0,0,8,2.36,10.14,10.14,0,1,0,22,14.05,1,1,0,0,0,21.64,13Zm-9.5,6.69A8.14,8.14,0,0,1,7.08,5.22v.27A10.15,10.15,0,0,0,17.22,15.63a9.79,9.79,0,0,0,2.1-.22A8.11,8.11,0,0,1,12.14,19.73Z"/></svg>
-                </label>
+                    <div class="flex items-center flex-wrap gap-x-4 gap-y-2 py-2">
+                        <button id="menu-toggle" class="btn btn-ghost -ml-2 md:hidden">
+                            <i class="fas fa-bars text-xl"></i>
+                        </button>
+
+                        <div class="form-control flex flex-row items-center">
+                            <label for="live-toggle" class="label cursor-pointer py-0">
+                                <span class="label-text mr-2">Live</span>
+                                <input type="checkbox" id="live-toggle" class="toggle toggle-sm toggle-primary">
+                            </label>
+                        </div>
+                        
+                        <select id="timezone" class="select select-bordered select-sm">
+                            <option value="Etc/UTC">UTC</option>
+                            <option value="Europe/London">London</option>
+                            <option value="Europe/Paris">Paris</option>
+                            <option value="Europe/Berlin">Berlin</option>
+                            <option value="Europe/Moscow">Moscow</option>
+                            <option value="Asia/Dubai">Dubai</option>
+                            <option value="Asia/Kolkata">Kolkata</option>
+                            <option value="Asia/Singapore">Singapore</option>
+                            <option value="Asia/Hong_Kong">Hong Kong</option>
+                            <option value="Asia/Tokyo">Tokyo</option>
+                            <option value="Australia/Sydney">Sydney</option>
+                            <option value="America/New_York" selected>New York</option>
+                            <option value="America/Chicago">Chicago</option>
+                            <option value="America/Los_Angeles">Los Angeles</option>
+                            <option value="America/Toronto">Toronto</option>
+                            <option value="America/Sao_Paulo">Sao Paulo</option>
+                            <option value="Pacific/Honolulu">Honolulu</option>
+                        </select>
+                        
+                        <div class="form-control">
+                            <select id="candle-type-select" class="select select-bordered select-sm">
+                                <option value="regular" selected>Regular</option>
+                                <option value="heikin_ashi">Heikin Ashi</option>
+                            </select>
+                        </div>
+
+                        <select id="chart-type" class="select select-bordered select-sm">
+                            <option value="candlestick" selected>Candlestick</option>
+                            <option value="bar">Bar</option>
+                        </select>
+                        
+                        <button id="screenshot-btn" class="btn btn-sm btn-ghost"><i class="fas fa-camera"></i></button>
+                        <button class="btn btn-sm btn-ghost" onclick="settings_modal.showModal()"><i class="fas fa-cog"></i></button>
+                    </div>
+
+                    <label class="swap swap-rotate" id="theme-toggle">
+                        <input type="checkbox" />
+                        <svg class="swap-on fill-current w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5.64,17l-.71.71a1,1,0,0,0,0,1.41,1,1,0,0,0,1.41,0l.71-.71A1,1,0,0,0,5.64,17ZM5,12a1,1,0,0,0-1-1H3a1,1,0,0,0,0,2H4A1,1,0,0,0,5,12Zm7-7a1,1,0,0,0,1-1V3a1,1,0,0,0-2,0V4A1,1,0,0,0,12,5ZM5.64,7.05a1,1,0,0,0,.7.29,1,1,0,0,0,.71-.29l.71-.71A1,1,0,0,0,6.34,4.93l-.71.71A1,1,0,0,0,5.64,7.05ZM18.36,16.95a1,1,0,0,0-.7-1.71H16.91a1,1,0,0,0,0,2h.75a1,1,0,0,0,.7-1.71ZM12,18a1,1,0,0,0-1,1v1a1,1,0,0,0,2,0V19A1,1,0,0,0,12,18Zm5.36-1.64a1,1,0,0,0-.71.29l-.71.71a1,1,0,1,0,1.41,1.41l.71-.71A1,1,0,0,0,17.36,16.36ZM20,11H19a1,1,0,0,0,0,2h1a1,1,0,0,0,0-2Z"/></svg>
+                        <svg class="swap-off fill-current w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21.64,13a1,1,0,0,0-1.05-.14,8.05,8.05,0,0,1-3.37.73A8.15,8.15,0,0,1,9.08,5.49a8.59,8.59,0,0,1,.25-2A1,1,0,0,0,8,2.36,10.14,10.14,0,1,0,22,14.05,1,1,0,0,0,21.64,13Zm-9.5,6.69A8.14,8.14,0,0,1,7.08,5.22v.27A10.15,10.15,0,0,0,17.22,15.63a9.79,9.79,0,0,0,2.1-.22A8.11,8.11,0,0,1,12.14,19.73Z"/></svg>
+                    </label>
+                </div>                
             </div>
-            
             <div class="flex-1 p-1">
                 <div class="card bg-base-100 shadow-xl rounded-box flex-grow relative h-full">
                     <div id="data-legend" class="absolute top-2 left-2 z-10 p-2 bg-base-200 bg-opacity-70 rounded-md text-xs pointer-events-none hidden"></div>
@@ -147,11 +154,17 @@
                 <div class="divider lg:divider-horizontal"></div>
                 <button id="tool-remove-selected" class="btn btn-sm btn-ghost text-error" title="Remove Selected"><i class="fas fa-eraser"></i></button>
                 <button id="tool-remove-all" class="btn btn-sm btn-ghost text-error" title="Remove All"><i class="fas fa-trash-alt"></i></button>
+                <div id="scaling-buttons-container" class="absolute bottom-4 right-4 z-10">
+                    <div class="join">
+                        <button id="scaling-auto-btn" class="btn btn-sm join-item btn-active" title="Automatic Scaling">Auto</button>
+                        <button id="scaling-linear-btn" class="btn btn-sm join-item" title="Linear Scaling">Linear</button>
+                    </div>
+                </div>
             </div>
         </main>
     </div>
 
-    <div id="toast-container" class="fixed bottom-4 right-4 z-50 space-y-2"></div>
+    <div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
 
     <dialog id="settings_modal" class="modal">
         <div class="modal-box w-11/12 max-w-2xl">
@@ -199,5 +212,6 @@
     </dialog>
 
     <script src="/dist/lightweight-charts.standalone.production.js"></script>
-    <script type="module" src="/static/js/main.js"></script></body>
+    <script type="module" src="/static/js/main.js"></script>
+</body>
 </html>
