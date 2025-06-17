@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EigenKor Stock Charts</title>
+    
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@3.5.0/dist/full.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <link rel="stylesheet" href="/static/css/style.css">
+    
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/favicon_io/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon_io/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon_io/favicon-16x16.png">
+    <link rel="manifest" href="/static/favicon_io/site.webmanifest">
+</head>
+
+<body class="bg-base-200">
+    <div class="container mx-auto p-2 sm:p-4 flex flex-col h-screen">
+
+        <header class="flex-shrink-0 mb-4">
+            <div class="navbar bg-base-100 rounded-box shadow-lg">
+                <div class="flex-1">
+                    <img src="/static/favicon_io/favicon-32x32.png" alt="EigenKor Logo" class="w-8 h-8 mr-2">
+                    <a class="btn btn-ghost normal-case text-xl">EigenKor Stock Charts</a>
+                </div>
+                <div class="flex-none">
+                     <label class="swap swap-rotate" id="theme-toggle">
+                        <input type="checkbox" />
+                        <svg class="swap-on fill-current w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5.64,17l-.71.71a1,1,0,0,0,0,1.41,1,1,0,0,0,1.41,0l.71-.71A1,1,0,0,0,5.64,17ZM5,12a1,1,0,0,0-1-1H3a1,1,0,0,0,0,2H4A1,1,0,0,0,5,12Zm7-7a1,1,0,0,0,1-1V3a1,1,0,0,0-2,0V4A1,1,0,0,0,12,5ZM5.64,7.05a1,1,0,0,0,.7.29,1,1,0,0,0,.71-.29l.71-.71A1,1,0,0,0,6.34,4.93l-.71.71A1,1,0,0,0,5.64,7.05ZM18.36,16.95a1,1,0,0,0-.7-1.71H16.91a1,1,0,0,0,0,2h.75a1,1,0,0,0,.7-1.71ZM12,18a1,1,0,0,0-1,1v1a1,1,0,0,0,2,0V19A1,1,0,0,0,12,18Zm5.36-1.64a1,1,0,0,0-.71.29l-.71.71a1,1,0,1,0,1.41,1.41l.71-.71A1,1,0,0,0,17.36,16.36ZM20,11H19a1,1,0,0,0,0,2h1a1,1,0,0,0,0-2Z"/></svg>
+                        <svg class="swap-off fill-current w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21.64,13a1,1,0,0,0-1.05-.14,8.05,8.05,0,0,1-3.37.73A8.15,8.15,0,0,1,9.08,5.49a8.59,8.59,0,0,1,.25-2A1,1,0,0,0,8,2.36,10.14,10.14,0,1,0,22,14.05,1,1,0,0,0,21.64,13Zm-9.5,6.69A8.14,8.14,0,0,1,7.08,5.22v.27A10.15,10.15,0,0,0,17.22,15.63a9.79,9.79,0,0,0,2.1-.22A8.11,8.11,0,0,1,12.14,19.73Z"/></svg>
+                    </label>
+                </div>
+            </div>
+        </header>
+
+        <main class="flex-grow flex flex-col">
+        <div id="controls-toolbar" class="flex items-center justify-start gap-2 p-2 bg-base-100 rounded-box shadow-lg mb-4 overflow-x-auto">
+            <select id="exchange" class="select select-bordered select-sm">
+                <option value="NASDAQ" selected>NASDAQ</option>
+            </select>
+            <select id="symbol" class="select select-bordered select-sm">
+                <option value="AAPL" selected>AAPL</option>
+                <option value="AMZN">AMZN</option>
+                <option value="TSLA">TSLA</option>
+                <option value="@NQM25">@NQM25 (Futures)</option>
+            </select>
+            <select id="interval" class="select select-bordered select-sm">
+                    <option value="1s">1 Second</option>
+                    <option value="5s">5 Seconds</option>
+                    <option value="10s">10 Seconds</option>
+                    <option value="15s">15 Seconds</option>
+                    <option value="30s">30 Seconds</option>
+                    <option value="45s">45 Seconds</option>
+                    <option value="1m" selected>1 Minute</option>
+                    <option value="5m">5 Minutes</option>
+                    <option value="10m">10 Minutes</option>
+                    <option value="15m">15 Minutes</option>
+                    <option value="30m">30 Minutes</option>
+                    <option value="45m">45 Minutes</option>
+                    <option value="1h">1 Hour</option>
+                    <option value="1d">1 Day</option>
+            </select>
+            <input id="start_time" type="datetime-local" class="input input-bordered input-sm">
+            <input id="end_time" type="datetime-local" class="input input-bordered input-sm">
+            
+            <div class="form-control flex flex-row items-center">
+                <label for="live-toggle" class="label cursor-pointer">
+                <span class="label-text mr-2">Live</span> 
+                <input type="checkbox" id="live-toggle" class="toggle toggle-sm toggle-primary">
+                </label>
+            </div>
+            <select id="timezone" class="select select-bordered select-sm">
+                <option value="Etc/UTC">UTC</option>
+                <option value="Europe/London">London</option>
+                <option value="Europe/Paris">Paris</option>
+                <option value="Europe/Berlin">Berlin</option>
+                <option value="Europe/Moscow">Moscow</option>
+                <option value="Asia/Dubai">Dubai</option>
+                <option value="Asia/Kolkata">Kolkata</option>
+                <option value="Asia/Singapore">Singapore</option>
+                <option value="Asia/Hong_Kong">Hong Kong</option>
+                <option value="Asia/Tokyo">Tokyo</option>
+                <option value="Australia/Sydney">Sydney</option>
+                <option value="America/New_York" selected>New York</option>
+                <option value="America/Chicago">Chicago</option>
+                <option value="America/Los_Angeles">Los Angeles</option>
+                <option value="America/Toronto">Toronto</option>
+                <option value="America/Sao_Paulo">Sao Paulo</option>
+                <option value="Pacific/Honolulu">Honolulu</option>
+            </select>
+            <div class="join">
+                <button id="scaling-auto-btn" class="btn btn-sm join-item btn-active" title="Automatic Scaling">Auto</button>
+                <button id="scaling-linear-btn" class="btn btn-sm join-item" title="Linear Scaling">Linear</button>
+            </div>
+
+            <!-- NEW: Add candle type selector here -->
+            <div class="form-control">
+                <select id="candle-type-select" class="select select-bordered select-sm">
+                    <option value="regular" selected>Regular</option>
+                    <option value="heikin_ashi">Heikin Ashi</option>
+                </select>
+            </div>
+            
+            <select id="chart-type" class="select select-bordered select-sm">
+                <option value="candlestick" selected>Candlestick</option>
+                <option value="bar">Bar</option>
+            </select>
+            <button id="screenshot-btn" class="btn btn-sm btn-ghost"><i class="fas fa-camera"></i></button>
+            <button class="btn btn-sm btn-ghost" onclick="settings_modal.showModal()"><i class="fas fa-cog"></i></button>
+        </div>
+            <div class="flex-grow flex flex-col lg:flex-row">
+                <div id="drawing-toolbar" class="flex flex-row lg:flex-col items-center flex-wrap gap-2 p-2 mb-2 lg:mb-0 lg:mr-2 bg-base-100 rounded-box shadow-lg">
+                    <button id="tool-trend-line" class="btn btn-sm btn-ghost" title="Trend Line"><i class="fas fa-chart-line"></i></button>
+                    <button id="tool-horizontal-line" class="btn btn-sm btn-ghost" title="Horizontal Line"><i class="fas fa-ruler-horizontal"></i></button>
+                    <button id="tool-fib-retracement" class="btn btn-sm btn-ghost" title="Fibonacci Retracement"><i class="fas fa-wave-square"></i></button>
+                    <button id="tool-rectangle" class="btn btn-sm btn-ghost" title="Rectangle"><i class="far fa-square"></i></button>
+                    <button id="tool-brush" class="btn btn-sm btn-ghost" title="Brush"><i class="fas fa-paint-brush"></i></button>
+                    <div class="divider lg:divider-horizontal"></div>
+                    <button id="tool-remove-selected" class="btn btn-sm btn-ghost text-error" title="Remove Selected"><i class="fas fa-eraser"></i></button>
+                    <button id="tool-remove-all" class="btn btn-sm btn-ghost text-error" title="Remove All"><i class="fas fa-trash-alt"></i></button>
+                </div>
+
+                <div class="card bg-base-100 shadow-xl rounded-box flex-grow relative">
+                    <div id="data-legend" class="absolute top-2 left-2 z-10 p-2 bg-base-200 bg-opacity-70 rounded-md text-xs pointer-events-none hidden"></div>
+                    <div class="chart-wrapper">
+                        <div id="chartContainer" class="w-full h-full relative">
+                            <div id="loadingIndicator" class="absolute inset-0 flex items-center justify-center bg-base-100 bg-opacity-50 z-20" style="display: none;">
+                                <span class="loading loading-spinner loading-lg"></span>
+                            </div>
+                            <!-- Data legend will be positioned here via CSS -->
+                            <div id="data-legend" style="display: none;">
+                                <!-- OHLC data will be inserted here by JavaScript -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- <div id="dataSummary" class="mt-2 text-sm px-2"></div> -->
+        </main>
+    </div>
+
+    <div id="toast-container" class="fixed bottom-4 right-4 z-50 space-y-2"></div>
+
+    <dialog id="settings_modal" class="modal">
+        <div class="modal-box w-11/12 max-w-2xl">
+            <h3 class="font-bold text-lg">Chart Settings</h3>
+            <div class="tabs tabs-boxed my-4">
+                <a class="tab tab-active" data-tab="chart-settings-tab">Chart</a>
+                <a class="tab" data-tab="series-settings-tab">Series</a>
+            </div>
+            
+            <div class="space-y-4 tab-content" id="chart-settings-tab">
+                <div class="form-control"><label class="label"><span class="label-text">Background Color</span></label><input type="color" id="setting-bg-color" class="input input-sm"></div>
+                <div class="form-control"><label class="label"><span class="label-text">Grid Color</span></label><input type="color" id="setting-grid-color" class="input input-sm"></div>
+                <div class="form-control"><label class="label"><span class="label-text">Watermark Text</span></label><input type="text" id="setting-watermark-text" class="input input-sm input-bordered"></div>
+            </div>
+
+            <div class="space-y-4 tab-content hidden" id="series-settings-tab">
+                <p class="font-bold">Candlestick/Bar Colors</p>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="form-control"><label class="label"><span class="label-text">Up Color</span></label><input type="color" id="setting-up-color" class="input input-sm"></div>
+                    <div class="form-control"><label class="label"><span class="label-text">Down Color</span></label><input type="color" id="setting-down-color" class="input input-sm"></div>
+                    <div class="form-control"><label class="label"><span class="label-text">Wick Up</span></label><input type="color" id="setting-wick-up-color" class="input input-sm"></div>
+                    <div class="form-control"><label class="label"><span class="label-text">Wick Down</span></label><input type="color" id="setting-wick-down-color" class="input input-sm"></div>
+                </div>
+                
+                <div class="form-control">
+                    <label class="cursor-pointer inline-flex items-center gap-4">
+                        <span class="label-text">Disable Wicks</span>
+                        <input type="checkbox" id="setting-disable-wicks" class="toggle" />
+                    </label>
+                    <label class="cursor-pointer inline-flex items-center gap-4">
+                        <span class="label-text">Show OHLCV on Hover</span>
+                        <input type="checkbox" id="setting-show-ohlc-legend" class="toggle" checked />
+                    </label>
+                </div>
+                <div class="divider"></div>
+                <p class="font-bold">Volume Colors</p>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="form-control"><label class="label"><span class="label-text">Up Color</span></label><input type="color" id="setting-vol-up-color" class="input input-sm"></div>
+                    <div class="form-control"><label class="label"><span class="label-text">Down Color</span></label><input type="color" id="setting-vol-down-color" class="input input-sm"></div>
+                </div>
+            </div>
+
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <script src="/dist/lightweight-charts.standalone.production.js"></script>
+    <script type="module" src="/static/js/main.js"></script></body>
+</html>

@@ -1,0 +1,377 @@
+/**
+ * Advanced Responsive Layout System
+ * TradingView-style dynamic adaptation
+ */
+
+/* Root variables for consistent spacing and sizing */
+:root {
+    --header-height: 4rem;
+    --toolbar-height: 3rem;
+    --min-chart-height: 300px;
+    --sidebar-width: 250px;
+    --control-panel-height: auto;
+    --responsive-padding: clamp(0.5rem, 2vw, 1rem);
+    --responsive-gap: clamp(0.5rem, 1.5vw, 0.75rem);
+    --font-size-responsive: clamp(0.75rem, 2vw, 0.875rem);
+}
+
+/* Enhanced container system */
+.container {
+    max-width: none !important;
+    width: 100% !important;
+    height: 100vh !important;
+    padding: var(--responsive-padding) !important;
+    margin: 0 !important;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+/* Responsive header */
+.navbar {
+    height: var(--header-height);
+    min-height: var(--header-height);
+    padding: 0 var(--responsive-padding);
+    flex-shrink: 0;
+    margin-bottom: var(--responsive-gap);
+}
+
+.navbar .flex-1 {
+    min-width: 0; /* Prevent flex item from growing too large */
+}
+
+.navbar .btn-ghost {
+    font-size: var(--font-size-responsive);
+    padding: 0.5rem;
+}
+
+/* Dynamic main layout */
+main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    gap: var(--responsive-gap);
+    overflow: hidden;
+}
+
+/* Enhanced chart controls */
+.chart-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--responsive-gap);
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem;
+    background: rgba(var(--b1), 0.95);
+    backdrop-filter: blur(8px);
+    border-radius: 0.5rem;
+    border: 1px solid rgba(var(--bc), 0.1);
+    flex-shrink: 0;
+    min-height: var(--toolbar-height);
+}
+
+.chart-controls > * {
+    flex-shrink: 0;
+}
+
+/* Responsive select and input elements */
+.chart-controls select,
+.chart-controls input {
+    min-width: 0;
+    font-size: var(--font-size-responsive);
+}
+
+/* Chart container with dynamic sizing */
+.chart-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: var(--min-chart-height);
+    position: relative;
+    overflow: hidden;
+    border-radius: 0.5rem;
+    background: rgba(var(--b1), 1);
+    border: 1px solid rgba(var(--bc), 0.1);
+}
+
+#chartContainer {
+    flex: 1;
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: var(--min-chart-height);
+    border-radius: inherit;
+    overflow: hidden;
+}
+
+/* Enhanced data legend with responsive positioning */
+#data-legend {
+    position: absolute;
+    top: clamp(4px, 1vw, 8px);
+    left: clamp(4px, 1vw, 8px);
+    z-index: 10;
+    padding: clamp(8px, 1.5vw, 12px);
+    background: rgba(var(--b2), 0.95);
+    backdrop-filter: blur(8px);
+    border-radius: clamp(4px, 1vw, 8px);
+    border: 1px solid rgba(var(--bc), 0.1);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    pointer-events: none;
+    min-width: clamp(140px, 20vw, 180px);
+    font-size: clamp(10px, 1.5vw, 11px);
+    line-height: 1.4;
+    transition: opacity 0.2s ease-in-out;
+    max-width: calc(100vw - 2rem);
+    word-wrap: break-word;
+}
+
+/* Responsive breakpoints */
+
+/* Large Desktop (1440px+) */
+@media (min-width: 1440px) {
+    :root {
+        --header-height: 4.5rem;
+        --toolbar-height: 3.5rem;
+        --responsive-padding: 1.5rem;
+        --responsive-gap: 1rem;
+    }
+    
+    .chart-controls {
+        padding: 1rem 1.5rem;
+    }
+    
+    #data-legend {
+        font-size: 12px;
+        min-width: 200px;
+        padding: 14px;
+    }
+}
+
+/* Desktop (1024px to 1439px) */
+@media (max-width: 1439px) and (min-width: 1024px) {
+    :root {
+        --responsive-padding: 1rem;
+        --responsive-gap: 0.75rem;
+    }
+    
+    .chart-controls {
+        gap: 0.5rem;
+    }
+}
+
+/* Tablet Landscape (768px to 1023px) */
+@media (max-width: 1023px) and (min-width: 768px) {
+    :root {
+        --header-height: 3.5rem;
+        --toolbar-height: 2.5rem;
+        --responsive-padding: 0.75rem;
+        --responsive-gap: 0.5rem;
+        --min-chart-height: 250px;
+    }
+    
+    .navbar .btn-ghost {
+        font-size: 0.875rem;
+    }
+    
+    .chart-controls {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.5rem;
+        padding: 0.75rem;
+    }
+    
+    .chart-controls > div {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+    
+    #data-legend {
+        font-size: 10px;
+        min-width: 150px;
+        top: 4px;
+        left: 4px;
+        padding: 8px;
+    }
+}
+
+/* Tablet Portrait and Small Laptop (640px to 767px) */
+@media (max-width: 767px) and (min-width: 640px) {
+    :root {
+        --header-height: 3rem;
+        --toolbar-height: auto;
+        --responsive-padding: 0.5rem;
+        --responsive-gap: 0.5rem;
+        --min-chart-height: 200px;
+    }
+    
+    .container {
+        padding: 0.5rem !important;
+    }
+    
+    .navbar {
+        flex-direction: column;
+        height: auto;
+        gap: 0.5rem;
+        padding: 0.5rem;
+    }
+    
+    .chart-controls {
+        flex-direction: column;
+        gap: 0.5rem;
+        padding: 0.5rem;
+    }
+    
+    .chart-controls select,
+    .chart-controls input {
+        width: 100%;
+        min-width: auto;
+    }
+    
+    #data-legend {
+        font-size: 9px;
+        min-width: 130px;
+        top: 2px;
+        left: 2px;
+        padding: 6px;
+        line-height: 1.2;
+    }
+}
+
+/* Mobile and very small screens (below 640px) */
+@media (max-width: 639px) {
+    :root {
+        --header-height: 2.5rem;
+        --responsive-padding: 0.25rem;
+        --responsive-gap: 0.25rem;
+        --min-chart-height: 180px;
+    }
+    
+    .container {
+        padding: 0.25rem !important;
+        height: 100vh !important;
+    }
+    
+    .navbar {
+        flex-direction: column;
+        height: auto;
+        padding: 0.25rem;
+        margin-bottom: 0.25rem;
+    }
+    
+    .navbar .flex-1 {
+        width: 100%;
+        text-align: center;
+    }
+    
+    .navbar .btn-ghost {
+        font-size: 0.75rem;
+        padding: 0.25rem;
+    }
+    
+    .chart-controls {
+        flex-direction: column;
+        gap: 0.25rem;
+        padding: 0.5rem;
+    }
+    
+    .chart-controls > * {
+        width: 100%;
+    }
+    
+    #data-legend {
+        font-size: 8px;
+        min-width: 100px;
+        top: 2px;
+        left: 2px;
+        padding: 4px;
+        line-height: 1.1;
+    }
+    
+    #data-legend .font-mono {
+        font-size: 7px;
+    }
+}
+
+/* Loading indicator responsive */
+#loadingIndicator {
+    backdrop-filter: blur(4px);
+    transition: opacity 0.3s ease-in-out;
+}
+
+/* Settings modal responsive */
+.modal-box {
+    width: min(90vw, 600px);
+    max-width: 90vw;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+/* Toast notifications responsive */
+#toast-container {
+    position: fixed;
+    bottom: var(--responsive-padding);
+    right: var(--responsive-padding);
+    z-index: 1000;
+    max-width: calc(100vw - 2 * var(--responsive-padding));
+}
+
+/* Utility classes for responsive behavior */
+.responsive-hide-sm {
+    display: block;
+}
+
+.responsive-hide-md {
+    display: block;
+}
+
+@media (max-width: 639px) {
+    .responsive-hide-sm {
+        display: none !important;
+    }
+}
+
+@media (max-width: 767px) {
+    .responsive-hide-md {
+        display: none !important;
+    }
+}
+
+/* Enhanced hover effects for better UX */
+.chart-controls select:hover,
+.chart-controls input:hover,
+.btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    transition: all 0.2s ease-in-out;
+}
+
+/* Print styles for better screenshots */
+@media print {
+    .container {
+        height: auto !important;
+        overflow: visible !important;
+    }
+    
+    .chart-controls {
+        display: none !important;
+    }
+    
+    .navbar {
+        display: none !important;
+    }
+    
+    #chartContainer {
+        width: 100% !important;
+        height: 80vh !important;
+    }
+}
+
+/* High DPI display optimizations */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+    #chartContainer {
+        image-rendering: -webkit-optimize-contrast;
+        image-rendering: crisp-edges;
+    }
+}

@@ -1,0 +1,39 @@
+# Trading Platform Requirements
+# UPDATED: Added dependencies for WebSocket connection pooling optimization
+
+# Core FastAPI and server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Redis for caching and pub/sub (optimized with connection pooling)
+redis>=5.0.0
+aioredis>=2.0.0  # NEW: For async Redis operations in connection manager
+
+# Database and data processing
+influxdb-client>=1.38.0
+pandas>=1.5.0
+numpy>=1.24.0
+
+# Configuration and environment
+python-dotenv>=1.0.0
+pydantic-settings>=2.0.0
+
+# Time zone support
+tzdata>=2023.0
+backports.zoneinfo; python_version < '3.9'
+
+# Task scheduling
+apscheduler>=3.10.0
+
+# Windows-specific (if on Windows)
+pywin32; sys_platform == "win32"
+
+# NEW: Monitoring dependencies
+aiohttp>=3.8.0  # For health check monitoring
+
+# Development and testing (optional)
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.0.0
