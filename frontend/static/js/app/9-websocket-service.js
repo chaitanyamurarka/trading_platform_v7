@@ -1,7 +1,7 @@
 // frontend/static/js/app/9-websocket-service.js
 import { state } from './2-state.js';
 import * as elements from './1-dom-elements.js';
-import { showToast, updateDataSummary } from './4-ui-helpers.js';
+import { showToast } from './4-ui-helpers.js';
 
 let liveDataSocket = null;
 let haLiveDataSocket = null;
@@ -39,7 +39,6 @@ function handleRegularLiveData(data) {
             const volumeData = { time: current_bar.unix_timestamp, value: current_bar.volume, color: current_bar.close >= current_bar.open ? elements.volUpColorInput.value + '80' : elements.volDownColorInput.value + '80' };
             state.volumeSeries.update(volumeData);
         }
-        updateDataSummary(current_bar);
         autoScrollView();
     }
 }
@@ -58,7 +57,6 @@ function handleLiveHeikinAshiData(data) {
             const dataSize = chartData.length;
             state.mainChart.timeScale().setVisibleLogicalRange({ from: Math.max(0, dataSize - 100), to: dataSize - 1 });
         }
-        updateDataSummary(data[data.length - 1]);
         
     } else if (data.current_bar) { // Handle live HA update
         const { current_bar } = data;
@@ -68,7 +66,6 @@ function handleLiveHeikinAshiData(data) {
             const volumeData = { time: current_bar.unix_timestamp, value: current_bar.volume || 0, color: current_bar.close >= current_bar.open ? elements.volUpColorInput.value + '80' : elements.volDownColorInput.value + '80' };
             state.volumeSeries.update(volumeData);
         }
-        updateDataSummary(current_bar);
         autoScrollView();
     }
 }

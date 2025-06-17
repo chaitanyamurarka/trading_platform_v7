@@ -110,14 +110,14 @@ export function showToast(message, type = 'info') {
     }, 4000);
 }
 
-export function updateDataSummary(latestData) {
-    if (!elements.dataSummaryElement || !latestData) return;
-    const change = latestData.close - latestData.open;
-    const changePercent = (change / latestData.open) * 100;
-    elements.dataSummaryElement.innerHTML = `
-        <strong>${elements.symbolSelect.value} (${elements.exchangeSelect.value})</strong> | C: ${latestData.close.toFixed(2)} | H: ${latestData.high.toFixed(2)} | L: ${latestData.low.toFixed(2)} | O: ${latestData.open.toFixed(2)}
-        <span class="${change >= 0 ? 'text-success' : 'text-error'}">(${change.toFixed(2)} / ${changePercent.toFixed(2)}%)</span>`;
-}
+// export function updateDataSummary(latestData) {
+//     if (!elements.dataSummaryElement || !latestData) return;
+//     const change = latestData.close - latestData.open;
+//     const changePercent = (change / latestData.open) * 100;
+//     elements.dataSummaryElement.innerHTML = `
+//         <strong>${elements.symbolSelect.value} (${elements.exchangeSelect.value})</strong> | C: ${latestData.close.toFixed(2)} | H: ${latestData.high.toFixed(2)} | L: ${latestData.low.toFixed(2)} | O: ${latestData.open.toFixed(2)}
+//         <span class="${change >= 0 ? 'text-success' : 'text-error'}">(${change.toFixed(2)} / ${changePercent.toFixed(2)}%)</span>`;
+// }
 
 export function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);

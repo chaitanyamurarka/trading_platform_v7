@@ -2,7 +2,7 @@
 import { getHistoricalDataUrl, getHistoricalDataChunkUrl, getHeikinAshiDataUrl, getHeikinAshiDataChunkUrl, fetchHeikinAshiData, fetchHeikinAshiChunk } from '../api.js';
 import { state, constants } from './2-state.js';
 import * as elements from './1-dom-elements.js';
-import { showToast, updateDataSummary } from './4-ui-helpers.js';
+import { showToast } from './4-ui-helpers.js';
 import { connectToLiveDataFeed, connectToLiveHeikinAshiData, disconnectFromAllLiveFeeds } from './9-websocket-service.js';
 
 async function fetchInitialHistoricalData(sessionToken, exchange, token, interval, startTime, endTime, timezone) {
@@ -135,7 +135,6 @@ export async function loadInitialChart() {
         }
 
         state.mainChart.priceScale().applyOptions({ autoscale: true });
-        updateDataSummary(state.allChartData[state.allChartData.length - 1]);
     } catch (error) {
         console.error('Failed to fetch initial chart data:', error);
         showToast(`Error: ${error.message}`, 'error');
@@ -176,7 +175,6 @@ export async function loadHeikinAshiChart() {
         }
 
         state.mainChart.priceScale().applyOptions({ autoscale: true });
-        updateDataSummary(state.allHeikinAshiData[state.allHeikinAshiData.length - 1]);
 
         showToast(`Heikin Ashi data loaded successfully. ${responseData.message}`, 'success');
 

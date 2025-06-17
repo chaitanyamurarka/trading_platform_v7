@@ -58,13 +58,35 @@ export function setupChartInteractionListeners() {
     if (!state.mainChart) return;
 
     state.mainChart.subscribeCrosshairMove((param) => {
-        if (!param.time || !param.seriesPrices) {
+        if (!param.time || !param.seriesPrices || param.seriesPrices.size === 0) {
             showLatestOHLCValues();
             return;
         }
+
         const priceData = param.seriesPrices.get(state.mainSeries);
-        const volumeData = state.volumeSeries ? param.seriesPrices.get(state.volumeSeries) : null;
-        updateOHLCLegend(priceData, volumeData);
+        if (!priceData) {
+            showLatestOHLCValues();
+            return;
+        }
+        
+        let volumeDataForLegend = null;
+        const rawVolumeValue = state.volumeSeries ? param.seriesPrices.get(state.volumeSeries) : undefined;
+
+        if (rawVolumeValue !== undefined) {
+            // The seriesPrice for a Histogram series is a raw number. We wrap it 
+            // in an object to match the structure our legend function expects.
+            volumeDataForLegend = { value: rawVolumeValue };
+        } else if (priceData.time) {
+            // Fallback: If the event somehow doesn't include the volume data,
+            // we attempt to find it in our state array manually.
+            const currentVolumeArray = state.getCurrentVolumeData();
+            const correspondingVolumePoint = currentVolumeArray.find(p => p.time === priceData.time);
+            if (correspondingVolumePoint) {
+                volumeDataForLegend = { value: correspondingVolumePoint.value };
+            }
+        }
+        
+        updateOHLCLegend(priceData, volumeDataForLegend);
     });
     
     window.addEventListener('resize', () => {
