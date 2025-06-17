@@ -1,0 +1,63 @@
+// frontend/static/js/app/11-ui-listeners.js
+import * as elements from './1-dom-elements.js';
+import { state } from './2-state.js';
+import { applyTheme, syncSettingsInputs, showToast, setAutomaticDateTime } from './4-ui-helpers.js';
+import { takeScreenshot, recreateMainSeries, applySeriesColors, applyVolumeColors } from './5-chart-drawing.js';
+import { loadChartData } from './6-api-service.js';
+import { connectToLiveDataFeed, connectToLiveHeikinAshiData, disconnectFromAllLiveFeeds } from './9-websocket-service.js';
+
+export function setupUiListeners() {
+    // Main chart controls
+    [elements.exchangeSelect, elements.symbolSelect, elements.intervalSelect, elements.startTimeInput, elements.endTimeInput, elements.timezoneSelect, elements.candleTypeSelect].forEach(control => {
+        control.addEventListener('change', () => loadChartData());
+    });
+    
+    // Live Toggle
+    elements.liveToggle.addEventListener('change', () => {
+        const isLive = elements.liveToggle.checked;
+        if (isLive) {
+            setAutomaticDateTime();
+            loadChartData(); // This will also trigger the appropriate live connection
+        } else {
+            disconnectFromAllLiveFeeds();
+        }
+    });
+
+    // Chart Type (Candlestick, Bar, etc.)
+    elements.chartTypeSelect.addEventListener('change', () => {
+        recreateMainSeries(elements.chartTypeSelect.value);
+    });
+
+    // Theme Toggle
+    const themeToggleCheckbox = elements.themeToggle.querySelector('input[type="checkbox"]');
+    themeToggleCheckbox.addEventListener('change', () => {
+        applyTheme(themeToggleCheckbox.checked ? 'dark' : 'light');
+    });
+
+    // Screenshot Button
+    elements.screenshotBtn.addEventListener('click', takeScreenshot);
+
+    // Settings Modal Listeners
+    setupSettingsModalListeners();
+}
+
+function setupSettingsModalListeners() {
+    elements.bgColorInput.addEventListener('input', () => state.mainChart.applyOptions({ layout: { background: { color: elements.bgColorInput.value } } }));
+    elements.gridColorInput.addEventListener('input', () => state.mainChart.applyOptions({ grid: { vertLines: { color: elements.gridColorInput.value }, horzLines: { color: elements.gridColorInput.value } } }));
+    elements.watermarkInput.addEventListener('input', () => state.mainChart.applyOptions({ watermark: { text: elements.watermarkInput.value } }));
+    
+    [elements.upColorInput, elements.downColorInput, elements.wickUpColorInput, elements.wickDownColorInput, elements.disableWicksInput].forEach(input => {
+        input.addEventListener('change', applySeriesColors);
+    });
+
+    [elements.volUpColorInput, elements.volDownColorInput].forEach(input => {
+        input.addEventListener('change', applyVolumeColors);
+    });
+
+    elements.showOHLCLegendToggle.addEventListener('change', () => {
+        state.showOHLCLegend = elements.showOHLCLegendToggle.checked;
+        if (!state.showOHLCLegend) {
+            elements.dataLegendElement.style.display = 'none';
+        }
+    });
+}
