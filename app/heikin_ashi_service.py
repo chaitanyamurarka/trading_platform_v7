@@ -1,4 +1,3 @@
-
 import logging
 from datetime import datetime, timezone as dt_timezone
 from typing import List, Optional
@@ -80,8 +79,8 @@ def get_heikin_ashi_data(
             exchange=exchange,
             token=token,
             interval=interval_val,
-            start_time_iso=start_time.isoformat(),
-            end_time_iso=end_time.isoformat(),
+            start_time=start_time, # Pass datetime object directly
+            end_time=end_time,     # Pass datetime object directly
             timezone=timezone,
             session_token=session_token
         )
@@ -121,8 +120,8 @@ def get_heikin_ashi_data(
                 exchange=exchange,
                 token=token,
                 interval=interval_val,
-                start_time_iso=start_time.isoformat(),
-                end_time_iso=end_time.isoformat(),
+                start_time=start_time, # Pass datetime object directly
+                end_time=end_time,     # Pass datetime object directly
                 timezone=timezone,
                 session_token=session_token
             )

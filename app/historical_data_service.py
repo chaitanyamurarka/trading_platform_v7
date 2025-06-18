@@ -1,22 +1,17 @@
-# In app/historical_data_service.py
-
 import logging
 from datetime import datetime, timezone as dt_timezone
 from typing import List
 from fastapi import HTTPException
-# Use zoneinfo for timezone conversions (available in Python 3.9+, backports for older versions)
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
     from backports.zoneinfo import ZoneInfo
 
 from . import schemas
-# Use the new centralized cache key builder
 from .cache import get_cached_ohlc_data, set_cached_ohlc_data, build_ohlc_cache_key, CACHE_EXPIRATION_SECONDS
 from .config import settings
 from influxdb_client import InfluxDBClient
 
-# --- InfluxDB Client Setup ---
 influx_client = InfluxDBClient(
     url=settings.INFLUX_URL,
     token=settings.INFLUX_TOKEN,
@@ -39,34 +34,25 @@ def get_initial_historical_data(
     """
     Main entry point for fetching historical data. It now correctly handles timezones for queries.
     """
-    # =================================================================
-    # --- NEW FIX: Make naive datetimes from the request timezone-aware ---
-    # =================================================================
     try:
-        # The timezone provided by the client (e.g., 'America/New_York')
         client_tz = ZoneInfo(timezone)
     except Exception:
         logging.warning(f"Invalid timezone '{timezone}' provided by client. Defaulting to UTC.")
         client_tz = ZoneInfo("UTC")
 
-    # The incoming start_time and end_time from FastAPI are naive.
-    # We must first make them "aware" of the client's timezone, then convert
-    # them to UTC for the InfluxDB query.
     start_time_aware = start_time.replace(tzinfo=client_tz)
     end_time_aware = end_time.replace(tzinfo=client_tz)
 
     start_time_utc = start_time_aware.astimezone(dt_timezone.utc)
     end_time_utc = end_time_aware.astimezone(dt_timezone.utc)
-    # --- END FIX ---
 
-
-    # Use the centralized function to build the cache key
+    # Use the centralized function to build the cache key with datetime objects
     request_id = build_ohlc_cache_key(
         exchange=exchange,
         token=token,
         interval=interval_val,
-        start_time_iso=start_time.isoformat(),
-        end_time_iso=end_time.isoformat(),
+        start_time=start_time_utc, # Pass datetime object directly
+        end_time=end_time_utc,     # Pass datetime object directly
         timezone=timezone,
         session_token=session_token
     )
@@ -76,7 +62,6 @@ def get_initial_historical_data(
     if not full_data:
         logging.info(f"Cache MISS for {request_id}. Querying InfluxDB...")
         try:
-            # Use the corrected UTC-aware datetimes in the query, formatting to ISO 8601 with 'Z'
             flux_query = f"""
                 from(bucket: "{settings.INFLUX_BUCKET}")
                   |> range(start: {start_time_utc.isoformat().replace('+00:00', 'Z')}, stop: {end_time_utc.isoformat().replace('+00:00', 'Z')})
@@ -90,7 +75,6 @@ def get_initial_historical_data(
             
             full_data = []
             
-            # This logic for display timezone conversion is correct and remains.
             try:
                 target_tz = ZoneInfo(timezone)
             except Exception:
