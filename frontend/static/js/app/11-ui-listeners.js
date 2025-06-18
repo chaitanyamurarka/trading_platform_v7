@@ -42,6 +42,9 @@ export function setupUiListeners() {
     
     // NEW: Add Sidebar Toggle Listener
     setupSidebarToggleListener();
+
+    // NEW: Add Settings Tabs Listeners
+    setupSettingsTabsListeners(); // Add this line
 }
 
 function setupSettingsModalListeners() {
@@ -82,4 +85,29 @@ function setupSidebarToggleListener() {
         // This will show an error in the console if the elements aren't found
         console.error('Could not find all required elements for sidebar toggle functionality.');
     }
+}
+
+// NEW: Function to handle settings tabs
+function setupSettingsTabsListeners() {
+    const tabsContainer = elements.settingsModal.querySelector('.tabs');
+    if (!tabsContainer) return;
+
+    tabsContainer.addEventListener('click', (event) => {
+        const clickedTab = event.target.closest('.tab');
+        if (!clickedTab) return;
+
+        // Remove active class from all tabs and add to clicked tab
+        tabsContainer.querySelectorAll('.tab').forEach(tab => tab.classList.remove('tab-active'));
+        clickedTab.classList.add('tab-active');
+
+        // Hide all tab contents and show the selected one
+        const tabContents = elements.settingsModal.querySelectorAll('.tab-content');
+        tabContents.forEach(content => content.classList.add('hidden'));
+
+        const targetTabId = clickedTab.dataset.tab;
+        const targetContent = document.getElementById(targetTabId);
+        if (targetContent) {
+            targetContent.classList.remove('hidden');
+        }
+    });
 }
