@@ -67,7 +67,7 @@ export function getSeriesOptions() {
     };
 
     if (disableWicks) {
-        // Use transparent colors to hide wicks
+        // Use transparent colors to completely hide wicks
         baseOptions.wickUpColor = 'rgba(0,0,0,0)';
         baseOptions.wickDownColor = 'rgba(0,0,0,0)';
     } else {
