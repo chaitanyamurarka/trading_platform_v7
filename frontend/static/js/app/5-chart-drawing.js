@@ -29,7 +29,54 @@ export function recreateMainSeries(type) {
 
 export function applySeriesColors() {
     if (!state.mainSeries) return;
-    state.mainSeries.applyOptions(getSeriesOptions());
+    
+    const disableWicks = elements.disableWicksInput.checked;
+    
+    if (disableWicks) {
+        // For better compatibility, recreate the series when disabling wicks
+        const currentData = state.allChartData || state.allHeikinAshiData || [];
+        const chartType = elements.chartTypeSelect.value;
+        
+        // Store current data
+        const dataToRestore = currentData.slice();
+        
+        // Remove current series
+        state.mainChart.removeSeries(state.mainSeries);
+        
+        // Create new series with wick-disabled options
+        const seriesOptions = getSeriesOptions();
+        
+        switch (chartType) {
+            case 'bar':
+                state.mainSeries = state.mainChart.addBarSeries(seriesOptions);
+                break;
+            case 'line':
+                state.mainSeries = state.mainChart.addLineSeries({ color: seriesOptions.upColor });
+                break;
+            case 'area':
+                state.mainSeries = state.mainChart.addAreaSeries({ 
+                    lineColor: seriesOptions.upColor, 
+                    topColor: `${seriesOptions.upColor}66`, 
+                    bottomColor: `${seriesOptions.upColor}00` 
+                });
+                break;
+            default:
+                state.mainSeries = state.mainChart.addCandlestickSeries(seriesOptions);
+                break;
+        }
+        
+        // Restore data
+        if (dataToRestore.length > 0) {
+            state.mainSeries.setData(dataToRestore);
+        }
+        
+        // Re-setup event listeners for the new series
+        setupChartInteractionListeners();
+        
+    } else {
+        // Just apply options when enabling wicks
+        state.mainSeries.applyOptions(getSeriesOptions());
+    }
 }
 
 export function applyVolumeColors() {

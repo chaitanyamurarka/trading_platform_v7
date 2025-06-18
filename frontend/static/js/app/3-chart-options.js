@@ -57,30 +57,35 @@ export const chartOptions = (theme) => {
  * @returns {object} The series options.
  */
 export function getSeriesOptions() {
-    const currentTheme = getChartTheme(localStorage.getItem('chartTheme') || 'light');
-
     const disableWicks = elements.disableWicksInput.checked;
-    const backgroundColor = currentTheme.layout.background.color // Get the current background color
 
-    return {
+    const baseOptions = {
         upColor: elements.upColorInput.value,
         downColor: elements.downColorInput.value,
         borderDownColor: elements.downColorInput.value,
         borderUpColor: elements.upColorInput.value,
-        // Use the background color to make wicks "invisible" when disabled
-        wickDownColor: disableWicks ? backgroundColor : elements.wickDownColorInput.value,
-        wickUpColor: disableWicks ? backgroundColor : elements.wickUpColorInput.value,
     };
+
+    if (disableWicks) {
+        // Use transparent colors to hide wicks
+        baseOptions.wickUpColor = 'rgba(0,0,0,0)';
+        baseOptions.wickDownColor = 'rgba(0,0,0,0)';
+    } else {
+        baseOptions.wickDownColor = elements.wickDownColorInput.value;
+        baseOptions.wickUpColor = elements.wickUpColorInput.value;
+    }
+
+    return baseOptions;
 }
 
 export function getChartTheme(theme) {
-    const isDarkMode = theme === 'dark';
+    const isDarkMode = theme === 'dark'; //
     return {
-        layout: { background: { type: 'solid', color: isDarkMode ? '#1d232a' : '#ffffff' }, textColor: isDarkMode ? '#a6adba' : '#1f2937' },
-        grid: { vertLines: { color: isDarkMode ? '#2a323c' : '#e5e7eb' }, horzLines: { color: isDarkMode ? '#2a323c' : '#e5e7eb' } },
+        layout: { background: { type: 'solid', color: isDarkMode ? '#1d232a' : '#ffffff' }, textColor: isDarkMode ? '#a6adba' : '#1f2937' }, //
+        grid: { vertLines: { color: isDarkMode ? '#2a323c' : '#e5e7eb' }, horzLines: { color: isDarkMode ? '#2a323c' : '#e5e7eb' } }, //
         // --- ADD THIS
         timeScale: {
-            timeVisible: true,
+            timeVisible: true, //
             secondsVisible: true, // You can set this to true if you need seconds precision
         }
         // ---
