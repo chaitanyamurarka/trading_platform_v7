@@ -57,8 +57,10 @@ export const chartOptions = (theme) => {
  * @returns {object} The series options.
  */
 export function getSeriesOptions() {
+    const currentTheme = getChartTheme(localStorage.getItem('chartTheme') || 'light');
+
     const disableWicks = elements.disableWicksInput.checked;
-    const backgroundColor = elements.bgColorInput.value; // Get the current background color
+    const backgroundColor = currentTheme.layout.background.color // Get the current background color
 
     return {
         upColor: elements.upColorInput.value,

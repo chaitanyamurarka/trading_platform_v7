@@ -48,7 +48,6 @@ export function setupUiListeners() {
 }
 
 function setupSettingsModalListeners() {
-    elements.bgColorInput.addEventListener('input', () => state.mainChart.applyOptions({ layout: { background: { color: elements.bgColorInput.value } } }));
     elements.gridColorInput.addEventListener('input', () => state.mainChart.applyOptions({ grid: { vertLines: { color: elements.gridColorInput.value }, horzLines: { color: elements.gridColorInput.value } } }));
     elements.watermarkInput.addEventListener('input', () => state.mainChart.applyOptions({ watermark: { text: elements.watermarkInput.value } }));
     

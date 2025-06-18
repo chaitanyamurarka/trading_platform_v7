@@ -29,7 +29,6 @@ export const toolRemoveAllBtn = document.getElementById('tool-remove-all');
 
 // Settings Modal
 export const settingsModal = document.getElementById('settings_modal');
-export const bgColorInput = document.getElementById('setting-bg-color');
 export const gridColorInput = document.getElementById('setting-grid-color');
 export const watermarkInput = document.getElementById('setting-watermark-text');
 export const upColorInput = document.getElementById('setting-up-color');

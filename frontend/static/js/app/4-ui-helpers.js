@@ -128,7 +128,6 @@ export function applyTheme(theme) {
 
 export function syncSettingsInputs() {
     const currentTheme = getChartTheme(localStorage.getItem('chartTheme') || 'light');
-    elements.bgColorInput.value = currentTheme.layout.background.color;
     elements.gridColorInput.value = currentTheme.grid.vertLines.color;
     elements.upColorInput.value = '#10b981';
     elements.downColorInput.value = '#ef4444';
