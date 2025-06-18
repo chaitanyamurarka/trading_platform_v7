@@ -1,0 +1,136 @@
+# artillery.yml
+config:
+  target: 'http://52.66.119.117:8000'  # Replace with your AWS EC2 IP
+  phases:
+    - name: "Warm-up (respecting rate limit)"
+      duration: 60 # seconds
+      arrivalRate: 0.1 # Start with 0.1 new users per second
+      rampTo: 0.3 # Ramp up to 0.3 new users per second
+    - name: "Main Load (respecting rate limit)"
+      duration: 300 # seconds
+      arrivalRate: 0.3 # Start with 0.3 new users per second
+      rampTo: 0.6 # Ramp up to 0.6 new users per second
+      maxVusers: 60 # Maximum concurrent virtual users, set higher to allow for long-running WebSocket users
+
+  # Global variables accessible in all scenarios
+  variables:
+    symbols: ["AAPL", "AMZN", "TSLA", "@NQM25"]
+    intervals: ["1s", "5m", "1h", "1d"]
+    timezones: ["America/New_York", "Etc/UTC", "Asia/Kolkata"]
+    liveStreamDuration: 30 # seconds to keep live WebSocket open
+
+  plugins:
+    expect: {}
+
+scenarios:
+  - name: "Historical Data Browse (Regular Candles)"
+    weight: 40 # This scenario makes more HTTP requests, so it's given a higher weight.
+    flow:
+      - get:
+          url: "/utils/session/initiate"
+          capture:
+            json: "$.session_token"
+            as: "sessionToken"
+      - think: 0.5 # Small delay to simulate user loading/processing
+      - get:
+          url: "/historical/"
+          qs:
+            session_token: "{{ sessionToken }}"
+            exchange: "NASDAQ"
+            token: "{{ $faker.random.arrayElement(symbols) }}"
+            interval: "{{ $faker.random.arrayElement(intervals) }}"
+            start_time: "{{ $datetime('YYYY-MM-DDTHH:MM:SS.000Z', '-30 days') }}"
+            end_time: "{{ $datetime('YYYY-MM-DDTHH:MM:SS.000Z', '-1 day') }}"
+            timezone: "{{ $faker.random.arrayElement(timezones) }}"
+          capture:
+            - json: "$.request_id"
+              as: "chartRequestId"
+            - json: "$.current_offset"
+              as: "chartCurrentOffset"
+      - think: 5 # Simulate user analysis time before potentially scrolling
+      - loop:
+          - get:
+              url: "/historical/chunk"
+              qs:
+                request_id: "{{ chartRequestId }}"
+                offset: "{{ chartCurrentOffset - 5000 }}" # Offset for previous chunk
+                limit: 5000
+              capture: # Capture new current_offset for the next potential chunk
+                json: "$.current_offset"
+                as: "chartCurrentOffset"
+              match:
+                status: 200
+          - think: 2 # Simulate user scrolling delay
+        count: 2 # Fetch 2 additional chunks
+
+  - name: "Historical Data Browse (Heikin Ashi)"
+    weight: 30 # Slightly less frequent than regular historical, similar request pattern
+    flow:
+      - get:
+          url: "/utils/session/initiate"
+          capture:
+            json: "$.session_token"
+            as: "sessionToken"
+      - think: 0.5
+      - get:
+          url: "/heikin-ashi/"
+          qs:
+            session_token: "{{ sessionToken }}"
+            exchange: "NASDAQ"
+            token: "{{ $faker.random.arrayElement(symbols) }}"
+            interval: "{{ $faker.random.arrayElement(intervals) }}"
+            start_time: "{{ $datetime('YYYY-MM-DDTHH:MM:SS.000Z', '-30 days') }}"
+            end_time: "{{ $datetime('YYYY-MM-DDTHH:MM:SS.000Z', '-1 day') }}"
+            timezone: "{{ $faker.random.arrayElement(timezones) }}"
+          capture:
+            - json: "$.request_id"
+              as: "heikinAshiRequestId"
+            - json: "$.current_offset"
+              as: "heikinAshiCurrentOffset"
+      - think: 5
+      - loop:
+          - get:
+              url: "/heikin-ashi/chunk"
+              qs:
+                request_id: "{{ heikinAshiRequestId }}"
+                offset: "{{ heikinAshiCurrentOffset - 5000 }}"
+                limit: 5000
+              capture:
+                json: "$.current_offset"
+                as: "heikinAshiCurrentOffset"
+              match:
+                status: 200
+          - think: 2
+        count: 2
+
+  - name: "Live Data Streaming (Regular Candles)"
+    weight: 15 # Less HTTP requests (only one for session), main load is WebSocket
+    flow:
+      - get:
+          url: "/utils/session/initiate"
+          capture:
+            json: "$.session_token"
+            as: "sessionToken"
+      - websocket:
+          url: "/ws/live/{{ $faker.random.arrayElement(symbols) }}/{{ $faker.random.arrayElement(intervals) }}/{{ $faker.random.arrayElement(timezones) }}"
+          expect:
+            - statusCode: 101 # Expect WebSocket protocol switch
+          actions:
+            - think: "{{ liveStreamDuration }}" # Keep the WebSocket connection open
+            - close: {} # Explicitly close the WebSocket connection
+
+  - name: "Live Data Streaming (Heikin Ashi Candles)"
+    weight: 15 # Similar to regular live data streaming
+    flow:
+      - get:
+          url: "/utils/session/initiate"
+          capture:
+            json: "$.session_token"
+            as: "sessionToken"
+      - websocket:
+          url: "/ws-ha/live/{{ $faker.random.arrayElement(symbols) }}/{{ $faker.random.arrayElement(intervals) }}/{{ $faker.random.arrayElement(timezones) }}"
+          expect:
+            - statusCode: 101
+          actions:
+            - think: "{{ liveStreamDuration }}"
+            - close: {}

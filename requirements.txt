@@ -30,6 +30,8 @@ pywin32; sys_platform == "win32"
 
 # NEW: Monitoring dependencies
 aiohttp>=3.8.0  # For health check monitoring
+psutil
+requests
 
 # Development and testing (optional)
 pytest>=7.0.0

@@ -1,0 +1,175 @@
+# stress-test-config.yml
+# Artillery.io configuration for comprehensive stress testing
+
+config:
+  target: 'http://52.66.119.117:8000/'  # Replace with your AWS EC2 IP
+  phases:
+    # Warm-up phase
+    - duration: 60
+      arrivalRate: 5
+      name: "Warm-up"
+    
+    # Ramp-up phase
+    - duration: 120
+      arrivalRate: 10
+      rampTo: 50
+      name: "Ramp-up"
+    
+    # Sustained load phase
+    - duration: 300
+      arrivalRate: 50
+      name: "Sustained Load"
+    
+    # Peak load phase
+    - duration: 120
+      arrivalRate: 50
+      rampTo: 100
+      name: "Peak Load"
+    
+    # Spike test
+    - duration: 60
+      arrivalRate: 200
+      name: "Spike Test"
+    
+    # Cool-down phase
+    - duration: 60
+      arrivalRate: 200
+      rampTo: 10
+      name: "Cool-down"
+
+  # Performance thresholds
+  ensure:
+    p95: 500  # 95th percentile response time should be under 500ms
+    p99: 1000 # 99th percentile response time should be under 1000ms
+    maxErrorRate: 5  # Maximum 5% error rate
+
+  # Payload configuration
+  payload:
+    path: "./test-symbols.csv"
+    order: "sequence"
+    fields:
+      - "symbol"
+      - "interval"
+
+  # WebSocket configuration
+  ws:
+    # Connection timeout
+    timeout: 30000
+
+scenarios:
+  # Test 1: API Endpoints Load Testing
+  - name: "API Load Test"
+    weight: 30
+    flow:
+      # Test historical data endpoint
+      - get:
+          url: "/historical-data"
+          qs:
+            symbol: "{{ symbol }}"
+            interval: "{{ interval }}"
+            limit: 100
+          headers:
+            User-Agent: "Artillery-StressTest"
+          capture:
+            - json: "$.data[0].timestamp"
+              as: "first_timestamp"
+      
+      # Test utility endpoints
+      - get:
+          url: "/symbols"
+          think: 1
+      
+      # Test health endpoint
+      - get:
+          url: "/health/websocket"
+          expect:
+            - statusCode: 200
+
+  # Test 2: WebSocket Stress Testing
+  - name: "WebSocket Stress Test"
+    weight: 50
+    engine: ws
+    flow:
+      # Connect to WebSocket
+      - connect:
+          url: "ws:///52.66.119.117:8000/ws/live-data/{{ symbol }}/{{ interval }}"
+      
+      # Send subscription message
+      - send:
+          payload: |
+            {
+              "action": "subscribe",
+              "symbol": "{{ symbol }}",
+              "interval": "{{ interval }}"
+            }
+      
+      # Wait for messages and simulate real user behavior
+      - think: 30
+      
+      # Send ping to keep connection alive
+      - send:
+          payload: |
+            {
+              "action": "ping",
+              "timestamp": "{{ $timestamp }}"
+            }
+      
+      # Continue receiving data
+      - think: 60
+      
+      # Unsubscribe
+      - send:
+          payload: |
+            {
+              "action": "unsubscribe",
+              "symbol": "{{ symbol }}",
+              "interval": "{{ interval }}"
+            }
+
+  # Test 3: Mixed Load Simulation
+  - name: "Mixed User Simulation"
+    weight: 20
+    flow:
+      # Simulate user browsing different symbols
+      - loop:
+          - get:
+              url: "/historical-data"
+              qs:
+                symbol: "AAPL"
+                interval: "1m"
+                limit: 50
+          - think: 2
+          
+          - get:
+              url: "/historical-data"
+              qs:
+                symbol: "GOOGL"
+                interval: "5m"
+                limit: 100
+          - think: 3
+          
+          - get:
+              url: "/historical-data"
+              qs:
+                symbol: "TSLA"
+                interval: "15m"
+                limit: 200
+          - think: 1
+        count: 5
+
+# Plugin configurations
+plugins:
+  # Enable metrics collection
+  metrics-by-endpoint:
+    # Group similar endpoints
+    useOnlyRequestNames: true
+
+  # Publish metrics to external system (optional)
+  publish-metrics:
+    - type: "statsd"
+      host: "localhost"
+      port: 8125
+      prefix: "artillery.stress_test"
+
+# Custom functions (if needed)
+processor: "./artillery-functions.js"
