@@ -16,6 +16,8 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from .middleware.security_headers import SecurityHeadersMiddleware
+from .middleware.rate_limiting import RateLimitMiddleware 
 
 # Import application components
 # from .dtn_iq_client import launch_iqfeed_service_if_needed
@@ -58,6 +60,9 @@ if os.path.isdir(static_dir):
 else:
     logging.error(f"Static directory not found at: {static_dir}. Static files will not be served.")
 
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RateLimitMiddleware, calls=100, period=60) # 100 requests per 60 seconds
+
 # --- Middleware Configuration (UNCHANGED) ---
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -70,7 +75,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], 
     allow_headers=["*"],
 )
 
