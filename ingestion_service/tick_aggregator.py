@@ -5,10 +5,16 @@ from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import List, Optional, Dict
 from concurrent.futures import ThreadPoolExecutor
 import multiprocessing as mp
+# NEW IMPORTS
+from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.triggers.cron import CronTrigger
+import pytz
+
 
 # Local imports
 from dtn_iq_client import get_iqfeed_history_conn
-from iqfeed_ingestor import get_latest_timestamp, get_last_completed_session_end_time_utc
+# MODIFIED IMPORT
+from iqfeed_ingestor import get_latest_timestamp, get_last_completed_session_end_time_utc, is_nasdaq_trading_hours
 from config import settings
 import pyiqfeed as iq
 from influxdb_client import Point
@@ -36,23 +42,23 @@ CONCURRENT_WRITES = 4  # Number of concurrent InfluxDB writers
 # --- Optimized InfluxDB Connection Pool ---
 class InfluxDBPool:
     """Connection pool for InfluxDB with async writers"""
-    
+
     def __init__(self, pool_size=CONCURRENT_WRITES):
         self.pool_size = pool_size
         self.clients = []
         self.write_apis = []
         self._create_pool()
-        
+
     def _create_pool(self):
         """Create a pool of InfluxDB connections"""
         for i in range(self.pool_size):
             client = InfluxDBClient(
-                url=INFLUX_URL, 
-                token=INFLUX_TOKEN, 
-                org=INFLUX_ORG, 
+                url=INFLUX_URL,
+                token=INFLUX_TOKEN,
+                org=INFLUX_ORG,
                 timeout=30_000
             )
-            
+
             # Optimized write options for high throughput
             write_api = client.write_api(write_options=WriteOptions(
                 batch_size=WRITE_BATCH_SIZE,
@@ -62,14 +68,14 @@ class InfluxDBPool:
                 max_retries=3,
                 exponential_base=1.1
             ))
-            
+
             self.clients.append(client)
             self.write_apis.append(write_api)
-            
+
     def get_write_api(self, index=0):
         """Get a write API from the pool"""
         return self.write_apis[index % self.pool_size]
-    
+
     def close_all(self):
         """Close all connections in the pool"""
         for client in self.clients:
@@ -106,7 +112,7 @@ def aggregate_ticks_to_bars(ticks: np.ndarray, ticks_per_bar: int) -> List[Dict]
         last_tick = chunk[-1]
         naive_dt = iq.date_us_to_datetime(last_tick['date'], last_tick['time'])
         aware_dt = naive_dt.replace(tzinfo=dt_timezone.utc)
-        
+
         # Aggregate data for the bar
         open_price = float(chunk[0]['last'])
         high_price = float(np.max(chunk['last']))
@@ -177,7 +183,7 @@ def process_aggregation_level(raw_ticks: np.ndarray, symbol: str, exchange: str,
     """Processes a single aggregation level for a set of ticks."""
     measurement_name = f"ohlc_{level}tick"
     logging.info(f"[{symbol}] Aggregating for {measurement_name}...")
-    
+
     aggregated_bars = aggregate_ticks_to_bars(raw_ticks, level)
     if not aggregated_bars:
         logging.info(f"[{symbol}] No bars were created for {measurement_name}.")
@@ -194,9 +200,14 @@ def process_aggregation_level(raw_ticks: np.ndarray, symbol: str, exchange: str,
     except Exception as e:
         logging.error(f"[{symbol}] Failed to write to InfluxDB for {measurement_name}: {e}")
 
+# MODIFIED FUNCTION
 def run_tick_ingestion(symbols: List[str], exchange: str, days_to_backfill: int = 7):
     """Main function to run the tick ingestion and aggregation process."""
     logging.info("--- Starting Tick Data Aggregation Service ---")
+    if is_nasdaq_trading_hours():
+        logging.warning("Aborting tick aggregation: operation is not permitted during trading hours.")
+        return
+
     hist_conn = get_iqfeed_history_conn()
     if not hist_conn:
         logging.error("Failed to get IQFeed history connection. Aborting.")
@@ -204,18 +215,66 @@ def run_tick_ingestion(symbols: List[str], exchange: str, days_to_backfill: int 
 
     with iq.ConnConnector([hist_conn]):
         end_date = get_last_completed_session_end_time_utc()
-        start_date = end_date - timedelta(days=days_to_backfill)
 
         for symbol in symbols:
             logging.info(f"--- Processing symbol: {symbol} ---")
-            # Here, you could add logic to check the latest timestamp in your tick-bar measurements
-            # and adjust `start_date` accordingly to prevent reprocessing.
+
+            latest_timestamps = []
+            for level in AGGREGATION_LEVELS:
+                measurement = f"ohlc_{level}tick"
+                latest_ts = get_latest_timestamp(symbol, measurement)
+                if latest_ts:
+                    latest_timestamps.append(latest_ts)
+
+            start_date = None
+            if latest_timestamps:
+                start_date = min(latest_timestamps)
+            else:
+                start_date = end_date - timedelta(days=days_to_backfill)
+
+            if start_date >= end_date:
+                logging.info(f"[{symbol}] All tick data is already up-to-date. Skipping.")
+                continue
+
             fetch_and_process_ticks(symbol, exchange, hist_conn, start_date, end_date)
 
     logging.info("--- Tick Data Aggregation Service Finished ---")
-    influx_pool.close_all()
+    # Closing is handled in main now
 
-if __name__ == "__main__":
+# NEW FUNCTION
+def scheduled_tick_update():
+    """Wrapper function for the scheduler."""
+    logging.info("--- Triggering Scheduled Tick Update ---")
     symbols_to_process = ["AAPL", "AMZN", "TSLA", "@NQM25"]
     exchange_name = "NASDAQ"
     run_tick_ingestion(symbols_to_process, exchange_name)
+
+if __name__ == "__main__":
+    logging.info("Running initial tick data update on startup...")
+    scheduled_tick_update()
+
+    logging.info("Initializing tick aggregation scheduler...")
+    scheduler = BlockingScheduler(timezone="America/New_York")
+
+    scheduler.add_job(
+        scheduled_tick_update,
+        trigger=CronTrigger(
+            hour=20,
+            minute=30, # Staggered slightly after the main ingestor
+            second=0,
+            timezone=pytz.timezone('America/New_York')
+        ),
+        name="Daily Tick Data Aggregation"
+    )
+
+    logging.info("Scheduler started. Waiting for jobs to run...")
+    logging.info("Press Ctrl+C to exit.")
+
+    try:
+        scheduler.start()
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Scheduler stopped. Shutting down...")
+    finally:
+        if influx_pool:
+            influx_pool.close_all()
+            logging.info("InfluxDB connection pool closed.")
