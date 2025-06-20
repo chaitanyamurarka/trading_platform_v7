@@ -21,17 +21,18 @@ redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
 
 class BarResampler:
     """
-    Aggregates 1-second BARS from Redis into OHLCV bars of a specified interval.
+    Aggregates raw ticks from Redis into OHLCV bars of a specified interval.
+    This class is now stateful and designed to be used per client subscription.
     """
 
     def __init__(self, interval_str: str, timezone_str: str):
         self.interval_str = interval_str
         self.interval_td = self._parse_interval(interval_str)
         self.current_bar: Optional[schemas.Candle] = None
-        self.last_bar_time: Optional[datetime] = None
+        
         try:
             self.tz = ZoneInfo(timezone_str)
-            logger.info(f"BarResampler initialized for timezone: {timezone_str}")
+            logger.info(f"BarResampler initialized for interval {interval_str}, timezone: {timezone_str}")
         except ZoneInfoNotFoundError:
             logger.warning(f"Invalid timezone '{timezone_str}', falling back to UTC.")
             self.tz = timezone.utc
@@ -48,20 +49,20 @@ class BarResampler:
             return timedelta(hours=value)
         raise ValueError(f"Invalid interval format: {interval_str}")
 
-    def _get_bar_start_time_naive(self, dt: datetime) -> datetime:
+    def _get_bar_start_time(self, dt_utc: datetime) -> datetime:
         """
-        Calculates the start time for a bar in the local timezone and returns it
-        as a naive datetime object (timezone info is stripped).
+        Calculates the start time for a bar in the local timezone, aligned
+        to the interval, and returns it as a naive datetime object.
         """
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-
-        # Convert the UTC time to the user's selected timezone
-        local_dt = dt.astimezone(self.tz)
+        # Convert the UTC tick time to the user's selected timezone
+        local_dt = dt_utc.astimezone(self.tz)
         
         interval_seconds = self.interval_td.total_seconds()
         
+        # Calculate how many seconds have passed since the beginning of the day in the local timezone
         seconds_past_midnight = local_dt.hour * 3600 + local_dt.minute * 60 + local_dt.second
+        
+        # Find the start of the current interval bucket
         seconds_into_current_interval = seconds_past_midnight % interval_seconds
         
         bar_start_local_dt = local_dt - timedelta(
@@ -69,157 +70,58 @@ class BarResampler:
             microseconds=local_dt.microsecond
         )
         
+        # Return as a naive datetime, which the charting library expects
         return bar_start_local_dt.replace(tzinfo=None)
 
-    def add_bar(self, bar: Dict) -> Optional[schemas.Candle]:
+    def add_bar(self, tick_data: Dict) -> Optional[schemas.Candle]:
         """
-        Adds a new 1-second bar. Assumes the bar dictionary contains a
-        standard UTC Unix timestamp from Redis.
+        Adds a new tick to the resampler. If a bar is completed, it's returned.
+        This method was previously named `add_bar`, but now it processes a `tick`.
+        The name is kept for compatibility with consumers.
         """
         completed_bar = None
         
-        open_p = float(bar['open'])
-        high_p = float(bar['high'])
-        low_p = float(bar['low'])
-        close_p = float(bar['close'])
-        volume = int(bar['volume'])
+        price = float(tick_data['price'])
+        volume = int(tick_data['volume'])
         
-        # Create a timezone-aware datetime object directly in UTC
-        timestamp_utc = datetime.fromtimestamp(bar['timestamp'], tz=timezone.utc)
+        # Create a timezone-aware datetime object in UTC from the tick's timestamp
+        timestamp_utc = datetime.fromtimestamp(tick_data['timestamp'], tz=timezone.utc)
 
-        # Create "fake" UTC timestamp for charting library
-        bar_start_naive = self._get_bar_start_time_naive(timestamp_utc)
-        fake_utc_timestamp = bar_start_naive.replace(tzinfo=timezone.utc).timestamp()
+        # Get the "fake" UTC timestamp for the start of the bar, which the charting library needs
+        bar_start_naive = self._get_bar_start_time(timestamp_utc)
+        bar_start_unix = bar_start_naive.replace(tzinfo=timezone.utc).timestamp()
         
         if not self.current_bar:
+            # This is the first tick for a new bar
             self.current_bar = schemas.Candle(
-                open=open_p, high=high_p, low=low_p, close=close_p, volume=volume,
-                unix_timestamp=fake_utc_timestamp
+                open=price, high=price, low=price, close=price, volume=volume,
+                unix_timestamp=bar_start_unix
             )
         else:
-            if fake_utc_timestamp > self.current_bar.unix_timestamp:
+            # Check if the tick belongs to the current bar or a new one
+            if bar_start_unix > self.current_bar.unix_timestamp:
+                # The previous bar is now complete
                 completed_bar = self.current_bar
+                # Start a new bar with the current tick's data
                 self.current_bar = schemas.Candle(
-                    open=open_p, high=high_p, low=low_p, close=close_p, volume=volume,
-                    unix_timestamp=fake_utc_timestamp
+                    open=price, high=price, low=price, close=price, volume=volume,
+                    unix_timestamp=bar_start_unix
                 )
             else:
-                self.current_bar.high = max(self.current_bar.high, high_p)
-                self.current_bar.low = min(self.current_bar.low, low_p)
-                self.current_bar.close = close_p
+                # This tick updates the current bar
+                self.current_bar.high = max(self.current_bar.high, price)
+                self.current_bar.low = min(self.current_bar.low, price)
+                self.current_bar.close = price
                 self.current_bar.volume += volume
 
-        self.last_bar_time = timestamp_utc
         return completed_bar
 
-async def live_data_stream(websocket: WebSocket, symbol: str, interval: str, timezone_str: str):
-    """
-    Handles the WebSocket connection for live data streaming with proper cleanup.
-    """
-    await websocket.accept()
-    resampler = BarResampler(interval, timezone_str)
-    pubsub_task = None
-    
-    try:
-        # --- 1. Send Initial Cached Data ---
-        cached_bars = await get_cached_intraday_bars(symbol, interval, timezone_str)
-        if cached_bars:
-            await websocket.send_json([bar.model_dump() for bar in cached_bars])
-            logger.info(f"Sent {len(cached_bars)} cached bars to client for {symbol}.")
-
-        # --- 2. Create a cancellable task for Redis pubsub ---
-        pubsub_task = asyncio.create_task(
-            stream_redis_data(websocket, symbol, resampler)
-        )
-        
-        # Wait for the task to complete or be cancelled
-        await pubsub_task
-
-    except (WebSocketDisconnect, ConnectionClosed):
-        logger.info(f"Client disconnected from {symbol} stream. Closing connection gracefully.")
-    except asyncio.CancelledError:
-        logger.info(f"Redis streaming task cancelled for {symbol}.")
-    except Exception as e:
-        logger.error(f"An unexpected error occurred in the live stream for {symbol}: {e}", exc_info=True)
-    finally:
-        logger.info(f"Cleaning up resources for {symbol}...")
-        
-        # Cancel the pubsub task if it's still running
-        if pubsub_task and not pubsub_task.done():
-            logger.info(f"Cancelling Redis pubsub task for {symbol}...")
-            pubsub_task.cancel()
-            try:
-                await asyncio.wait_for(pubsub_task, timeout=2.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                logger.info(f"Redis pubsub task cancelled/timed out for {symbol}")
-        
-        # Close WebSocket if still open
-        try:
-            if websocket.client_state.name != "DISCONNECTED":
-                await websocket.close()
-        except Exception as e:
-            logger.debug(f"Error closing websocket for {symbol}: {e}")
-        
-        logger.info(f"Resource cleanup complete for {symbol}.")
-
-
-async def stream_redis_data(websocket: WebSocket, symbol: str, resampler: BarResampler):
-    """
-    Separate task for handling Redis pubsub to allow proper cancellation.
-    """
-    pubsub = None
-    try:
-        pubsub = redis_client.pubsub()
-        channel_name = f"live_bars:{symbol}"
-        await pubsub.subscribe(channel_name)
-        logger.info(f"Subscribed to Redis channel: {channel_name}")
-        
-        while True:
-            # Use a shorter timeout to make cancellation more responsive
-            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-            
-            if message:
-                try:
-                    bar_message = json.loads(message['data'])
-                    completed_bar = resampler.add_bar(bar_message)
-                    
-                    live_update_payload = {
-                        "completed_bar": completed_bar.model_dump() if completed_bar else None,
-                        "current_bar": resampler.current_bar.model_dump() if resampler.current_bar else None
-                    }
-                    
-                    await websocket.send_json(live_update_payload)
-                    
-                except (json.JSONDecodeError, TypeError) as e:
-                    logger.error(f"Error decoding bar data from Redis: {e}")
-                except (WebSocketDisconnect, ConnectionClosed):
-                    logger.info(f"WebSocket disconnected during data send for {symbol}")
-                    break
-            
-            # Small sleep to prevent tight loop and allow cancellation
-            await asyncio.sleep(0.01)
-            
-    except asyncio.CancelledError:
-        logger.info(f"Redis streaming task cancelled for {symbol}")
-        raise
-    except Exception as e:
-        logger.error(f"Error in Redis streaming for {symbol}: {e}", exc_info=True)
-    finally:
-        # Clean up Redis pubsub connection
-        if pubsub:
-            try:
-                logger.info(f"Unsubscribing from Redis channel for {symbol}")
-                await pubsub.unsubscribe()
-                await pubsub.close()
-            except Exception as e:
-                logger.error(f"Error closing Redis pubsub for {symbol}: {e}")
-
-
-# Remove the old redis_pubsub_generator function as it's replaced by stream_redis_data
 
 async def get_cached_intraday_bars(symbol: str, interval: str, timezone_str: str) -> List[schemas.Candle]:
     """
-    Fetches 1-second bars from the Redis cache, resamples them, and returns them.
+    Fetches 1-second bars from the Redis cache (populated by BarConn_live_data_ingestor),
+    resamples them to the client's desired interval, and returns them.
+    This logic remains valid as it provides the historical backfill for a new client connection.
     """
     cache_key = f"intraday_bars:{symbol}"
     try:
@@ -229,19 +131,27 @@ async def get_cached_intraday_bars(symbol: str, interval: str, timezone_str: str
             logger.info(f"No cached intraday bars found for {symbol}.")
             return []
 
-        # Deserialize the bars
+        # Deserialize the 1-second bars from cache
         one_sec_bars = [json.loads(b) for b in cached_bars_str]
         logger.info(f"Fetched {len(one_sec_bars)} 1-sec bars from cache for {symbol} for resampling.")
 
-        # Resample the bars
+        # Resample the 1-sec bars into the desired interval
         resampler = BarResampler(interval, timezone_str)
         resampled_bars = []
         for bar in one_sec_bars:
-            completed_bar = resampler.add_bar(bar)
+            # The `add_bar` method now takes a tick, but we can adapt the 1s bar to look like a tick
+            # for the purpose of resampling the historical data.
+            # We'll treat the 'close' price of the 1s bar as the 'tick' price.
+            tick_like_data = {
+                "price": bar['close'],
+                "volume": bar['volume'],
+                "timestamp": bar['timestamp']
+            }
+            completed_bar = resampler.add_bar(tick_like_data)
             if completed_bar:
                 resampled_bars.append(completed_bar)
         
-        # Append the final, incomplete bar from the resampler
+        # Append the final, in-progress bar from the resampler
         if resampler.current_bar:
             resampled_bars.append(resampler.current_bar)
         
@@ -251,3 +161,7 @@ async def get_cached_intraday_bars(symbol: str, interval: str, timezone_str: str
     except Exception as e:
         logger.error(f"Error fetching/resampling cached intraday bars for {symbol}: {e}", exc_info=True)
         return []
+    
+# The rest of the file (live_data_stream, stream_redis_data) is no longer used by the new
+# websocket_manager and can be removed or ignored if desired. The websocket_manager
+# now contains the primary logic for handling live data.

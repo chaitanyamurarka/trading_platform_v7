@@ -27,15 +27,11 @@ async def get_live_heikin_ashi_data(
 ):
     """
     Provides historical and live Heikin Ashi data for a given symbol and interval.
-
-    - **On Connect**: Sends a batch of historical Heikin Ashi data, calculated from
-      the most recent regular intraday bars.
-    - **Live Updates**: Streams live Heikin Ashi updates as they occur, calculating
-      them from the real-time 1-second bar feed.
+    This now processes a raw tick feed from Redis.
     """
     await websocket.accept()
 
-    # Resampler for aggregating 1s bars into the requested interval for live data
+    # Resampler for aggregating raw ticks into regular bars for the requested interval
     regular_resampler = live_data_service.BarResampler(interval, timezone)
     # State-aware calculator for converting regular candles to Heikin Ashi candles
     ha_calculator = heikin_ashi_service.HeikinAshiLiveCalculator()
@@ -43,24 +39,13 @@ async def get_live_heikin_ashi_data(
     pubsub = None
     try:
         # --- 1. Fetch, Calculate, and Send Historical Data ---
+        # The historical backfill logic remains unchanged. It uses pre-aggregated
+        # 1-second bars from another service to quickly populate the chart.
         logger.info(f"[{symbol}] Getting cached intraday bars for HA backfill.")
         
-        # Fetch raw 1-second bars from Redis cache
-        cache_key = f"intraday_bars:{symbol}"
-        cached_bars_str = await redis_client.lrange(cache_key, 0, -1)
-        one_sec_bars = [json.loads(b) for b in cached_bars_str]
-        logger.info(f"[{symbol}] Fetched {len(one_sec_bars)} 1-sec bars from cache for HA backfill.")
-
-        # Resample the 1s bars into regular OHLC candles for the chosen interval
-        backfill_resampler = live_data_service.BarResampler(interval, timezone)
-        historical_regular_candles = []
-        for bar in one_sec_bars:
-            completed_bar = backfill_resampler.add_bar(bar)
-            if completed_bar:
-                historical_regular_candles.append(completed_bar)
-        if backfill_resampler.current_bar:
-             historical_regular_candles.append(backfill_resampler.current_bar)
-
+        # This function has been updated to resample 1s bars using the new tick-based resampler logic
+        historical_regular_candles = await live_data_service.get_cached_intraday_bars(symbol, interval, timezone)
+        
         # Convert the resampled regular candles into a full set of historical Heikin Ashi candles
         historical_ha_candles = heikin_ashi_service.calculate_heikin_ashi_candles(historical_regular_candles)
 
@@ -72,8 +57,9 @@ async def get_live_heikin_ashi_data(
             await websocket.send_json([bar.model_dump() for bar in historical_ha_candles])
             logger.info(f"[{symbol}] Sent {len(historical_ha_candles)} historical HA bars to client.")
 
-        # --- 2. Subscribe to Live Data Stream ---
-        channel_name = f"live_bars:{symbol}"
+        # --- 2. Subscribe to Live Tick Stream ---
+        # MODIFIED: Subscribe to the new raw ticks channel
+        channel_name = f"live_ticks:{symbol}"
         pubsub = redis_client.pubsub()
         await pubsub.subscribe(channel_name)
         logger.info(f"[{symbol}] Subscribed to Redis channel: {channel_name} for live HA updates.")
@@ -83,9 +69,11 @@ async def get_live_heikin_ashi_data(
             message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
 
             if message:
-                bar_message = json.loads(message['data'])
-                # The resampler processes the 1s bar and returns a completed regular bar when the interval is met
-                completed_regular_bar = regular_resampler.add_bar(bar_message)
+                # The message now contains a raw tick
+                tick_message = json.loads(message['data'])
+                
+                # The resampler processes the raw tick and returns a completed regular bar when the interval is met
+                completed_regular_bar = regular_resampler.add_bar(tick_message)
 
                 completed_ha_bar = None
                 if completed_regular_bar:

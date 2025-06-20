@@ -1,4 +1,4 @@
-# In ingestion_service/live_data_ingestor.py
+# In ingestion_service/QuoteConn_live_data_ingestor.py
 
 import logging
 import json
@@ -21,20 +21,22 @@ redis_client = redis.Redis.from_url(REDIS_URL)
 
 class LiveTickListener(iq.SilentQuoteListener):
     """
-    A listener that processes live data from QuoteConn, aggregates it into
-    1-second bars, and publishes completed bars to Redis.
+    A listener that processes live data from QuoteConn and publishes
+    raw ticks directly to Redis for the application server to process.
     """
 
     def __init__(self, name="LiveTickListener"):
         super().__init__(name)
         self.redis_client = redis_client
         self.source_timezone = ZoneInfo("America/New_York")
-        self.current_bars = {}
+        # Removed self.current_bars as aggregation is no longer done here.
 
     def backfill_intraday_data(self, symbol: str, hist_conn: iq.HistoryConn):
         """On startup, fetch today's data from IQFeed to populate the cache."""
         logging.info(f"Backfilling intraday data for {symbol}...")
         try:
+            # This part remains unchanged, as it's for historical backfill.
+            # It populates a cache that the app can use for initial chart loads.
             today_data = hist_conn.request_bars_for_days(
                 ticker=symbol, interval_len=1, interval_type='s', days=1, ascend=True)
 
@@ -64,74 +66,59 @@ class LiveTickListener(iq.SilentQuoteListener):
             logging.warning(f"No intraday data available to backfill for {symbol}.")
         except Exception as e:
             logging.error(f"Error during intraday backfill for {symbol}: {e}", exc_info=True)
+    
+    def _publish_tick(self, symbol: str, price: float, volume: int):
+        """
+        Publishes a single raw tick to Redis.
+        """
+        # Create a precise UTC timestamp for the tick
+        utc_timestamp = datetime.now(timezone.utc).timestamp()
+        
+        tick_data = {
+            "symbol": symbol,
+            "price": price,
+            "volume": volume,
+            "timestamp": utc_timestamp
+        }
+        
+        # Publish to the new 'live_ticks' channel
+        channel = f"live_ticks:{symbol}"
+        self.redis_client.publish(channel, json.dumps(tick_data))
+
 
     def process_summary(self, summary_data: np.ndarray) -> None:
-        """Handles summary messages, which are common for futures/indices."""
+        """Handles summary messages, treating them as ticks."""
         try:
             for summary in summary_data:
                 symbol = summary['Symbol'].decode('utf-8')
                 price = float(summary['Most Recent Trade'])
-                # Using 'Total Volume' from summary as it's more reliable here
-                volume = int(summary['Total Volume'])
+                # Using 'Total Volume' and tracking its change might be complex.
+                # For simplicity, we'll use a volume of 0 for non-trade updates.
+                volume = 0 
                 
                 if price > 0:
-                    self._update_bar(symbol, price, volume, is_trade=False)
+                    self._publish_tick(symbol, price, volume)
         except Exception as e:
             logging.error(f"Error processing SUMMARY data: {e}. Data: {summary_data}", exc_info=True)
 
     def process_update(self, update_data: np.ndarray) -> None:
-        """Handles trade update messages."""
+        """Handles trade update messages and publishes them as raw ticks."""
         try:
             for trade in update_data:
                 price = float(trade['Most Recent Trade'])
-                # 'Most Recent Trade Size' is the volume for this specific trade
                 volume = int(trade['Most Recent Trade Size'])
                 
+                # Ignore ticks with no price or volume
                 if price <= 0 or volume <= 0:
                     continue 
 
                 symbol = trade['Symbol'].decode('utf-8')
-                self._update_bar(symbol, price, volume, is_trade=True)
+                self._publish_tick(symbol, price, volume)
         except Exception as e:
             logging.error(f"Error processing TRADE data: {e}. Data: {update_data}", exc_info=True)
-
-    def _update_bar(self, symbol: str, price: float, volume: int, is_trade: bool):
-        """A centralized method to create or update the current bar for a symbol."""
-        aware_dt = datetime.now(self.source_timezone)
-        utc_dt = aware_dt.astimezone(timezone.utc)
-        bar_timestamp = int(utc_dt.replace(microsecond=0).timestamp())
-
-        if symbol not in self.current_bars or self.current_bars[symbol]['timestamp'] != bar_timestamp:
-            if symbol in self.current_bars:
-                self.publish_and_cache_bar(self.current_bars[symbol])
-
-            self.current_bars[symbol] = {
-                "timestamp": bar_timestamp, "symbol": symbol,
-                "open": price, "high": price, "low": price, "close": price,
-                # For a new bar, the volume is the volume of the first tick
-                "volume": volume if is_trade else 0
-            }
-        else:
-            bar = self.current_bars[symbol]
-            bar['high'] = max(bar['high'], price)
-            bar['low'] = min(bar['low'], price)
-            bar['close'] = price
-            # Only accumulate volume if it's from a trade update
-            if is_trade:
-                bar['volume'] += volume
-
-    def publish_and_cache_bar(self, bar_data):
-        """Publishes a completed bar to Redis pub/sub and caches it."""
-        message_to_publish = bar_data.copy()
-        symbol = message_to_publish.pop("symbol")
-        
-        channel = f"live_bars:{symbol}"
-        self.redis_client.publish(channel, json.dumps(message_to_publish))
-
-        cache_key = f"intraday_bars:{symbol}"
-        self.redis_client.rpush(cache_key, json.dumps(message_to_publish))
-        self.redis_client.expire(cache_key, 86400)
-
+    
+    # The _update_bar and publish_and_cache_bar methods are no longer needed
+    # and have been removed.
 
 def main():
     """Main function to start listening to live data."""
@@ -150,9 +137,11 @@ def main():
     
     with iq.ConnConnector([quote_conn, hist_conn]):
         for symbol in symbols:
+            # The backfill logic remains, it helps populate the chart on initial load
             listener.backfill_intraday_data(symbol, hist_conn)
+            # This subscribes to live trade updates from IQFeed
             quote_conn.trades_watch(symbol)
-            logging.info(f"Watching {symbol} for live updates.")
+            logging.info(f"Watching {symbol} for live tick updates.")
         
         try:
             logging.info("Ingestion service is running. Press Ctrl+C to stop.")
