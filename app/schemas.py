@@ -26,7 +26,11 @@ class Interval(str, Enum):
     MIN_45 = "45m"
     HOUR_1 = "1h"
     DAY_1 = "1d"
-
+    # NEW: Tick-based intervals
+    TICK_1 = "1t"    # 1 tick per bar
+    TICK_10 = "10t"  # 10 ticks per bar
+    TICK_1000 = "1000t" # 1000 ticks per bar
+    
 class CandleBase(BaseModel):
     """
     Base schema for a single OHLC (Open, High, Low, Close) data point.

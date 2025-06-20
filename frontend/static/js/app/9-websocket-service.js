@@ -21,7 +21,7 @@ function handleRegularLiveData(data) {
         const formattedBackfillBars = data.map(c => ({ time: c.unix_timestamp, open: c.open, high: c.high, low: c.low, close: c.close }));
         const formattedVolumeBars = data.map(c => ({ time: c.unix_timestamp, value: c.volume, color: c.close >= c.open ? elements.volUpColorInput.value + '80' : elements.volDownColorInput.value + '80' }));
         const lastHistoricalTime = state.allChartData.length > 0 ? state.allChartData[state.allChartData.length - 1].time : 0;
-        
+
         const newOhlcBars = formattedBackfillBars.filter(d => d.time > lastHistoricalTime);
         const newVolumeBars = formattedVolumeBars.filter(d => d.time > lastHistoricalTime);
 
@@ -70,12 +70,21 @@ function handleLiveHeikinAshiData(data) {
     }
 }
 
+// Helper function to check if interval is tick-based
+function isTickInterval(interval) {
+    return interval.endsWith('t');
+}
 
 export function connectToLiveDataFeed() {
     disconnectFromAllLiveFeeds();
     const symbol = elements.symbolSelect.value;
     const interval = elements.intervalSelect.value;
     const timezone = elements.timezoneSelect.value;
+
+    if (isTickInterval(interval)) {
+        showToast("Live mode is not supported for tick intervals.", 'warning');
+        return;
+    }
 
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsURL = `${wsProtocol}//${window.location.host}/ws/live/${encodeURIComponent(symbol)}/${interval}/${encodeURIComponent(timezone)}`;
@@ -94,6 +103,11 @@ export function connectToLiveHeikinAshiData() {
     const symbol = elements.symbolSelect.value;
     const interval = elements.intervalSelect.value;
     const timezone = elements.timezoneSelect.value;
+
+    if (isTickInterval(interval)) {
+        showToast("Live mode is not supported for tick intervals.", 'warning');
+        return;
+    }
 
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${wsProtocol}//${window.location.host}/ws-ha/live/${encodeURIComponent(symbol)}/${interval}/${encodeURIComponent(timezone)}`;

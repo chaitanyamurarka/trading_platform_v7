@@ -155,6 +155,136 @@ def format_tick_chunk_for_influx(
     
     return points
 
+def resample_ticks_to_ohlc(
+    raw_ticks: np.ndarray,
+    tick_interval: int,
+    symbol: str,
+    exchange: str,
+    source_timezone: ZoneInfo,
+    end_time_utc_cutoff: Optional[dt] = None
+) -> List[Point]:
+    """
+    Resamples raw tick data into OHLCV bars based on a specified tick count.
+    Each bar will contain 'tick_interval' number of ticks.
+    """
+    ohlc_points = []
+    current_ohlc = None
+    tick_count = 0
+    
+    # Sort by timestamp to ensure correct bar formation
+    raw_ticks = raw_ticks[np.argsort([iq.date_us_to_datetime(t['date'], t['time']).timestamp() for t in raw_ticks])]
+
+    for tick in raw_ticks:
+        naive_timestamp_dt = iq.date_us_to_datetime(tick['date'], tick['time'])
+        aware_timestamp_dt = naive_timestamp_dt.replace(tzinfo=source_timezone)
+        timestamp_utc = aware_timestamp_dt.astimezone(timezone.utc)
+
+        if end_time_utc_cutoff and timestamp_utc > end_time_utc_cutoff:
+            continue
+
+        price = float(tick['last'])
+        volume = int(tick['last_sz'])
+
+        if current_ohlc is None:
+            # Start a new bar
+            current_ohlc = {
+                "open": price,
+                "high": price,
+                "low": price,
+                "close": price,
+                "volume": volume,
+                "unix_timestamp": int(timestamp_utc.timestamp() * 1_000_000), # Microseconds for precision
+                "start_tick_id": tick['tick_id'] # Keep track of first tick in bar
+            }
+            tick_count = 1
+        else:
+            # Update current bar
+            current_ohlc["high"] = max(current_ohlc["high"], price)
+            current_ohlc["low"] = min(current_ohlc["low"], price)
+            current_ohlc["close"] = price
+            current_ohlc["volume"] += volume
+            tick_count += 1
+
+        if tick_count >= tick_interval:
+            # Bar is complete, create InfluxDB point
+            point = (
+                Point(f"ohlc_{tick_interval}t")
+                .tag("symbol", symbol)
+                .tag("exchange", exchange)
+                .field("open", current_ohlc["open"])
+                .field("high", current_ohlc["high"])
+                .field("low", current_ohlc["low"])
+                .field("close", current_ohlc["close"])
+                .field("volume", current_ohlc["volume"])
+                .time(current_ohlc["unix_timestamp"], write_precision=WritePrecision.US)
+            )
+            ohlc_points.append(point)
+            current_ohlc = None # Reset for next bar
+            tick_count = 0
+
+    return ohlc_points
+
+def ingest_aggregated_tick_data(symbol: str, exchange: str, hist_conn: iq.HistoryConn, tick_intervals: List[int]):
+    """
+    Fetches raw tick data and then aggregates it into OHLCV bars for specified tick intervals,
+    storing them in InfluxDB.
+    """
+    logging.info(f"Starting aggregated tick data ingestion for {symbol} for intervals: {tick_intervals}...")
+    
+    measurement_raw_ticks = "ticks"
+    latest_timestamp_raw_ticks = get_latest_timestamp(symbol, measurement_raw_ticks)
+    last_session_end_utc = get_last_completed_session_end_time_utc()
+
+    if latest_timestamp_raw_ticks:
+        start_dt_for_request = latest_timestamp_raw_ticks
+    else:
+        start_dt_for_request = last_session_end_utc - timedelta(days=7) # Fetch 7 days of raw ticks if no existing
+
+    end_dt_for_request = last_session_end_utc
+
+    if start_dt_for_request >= end_dt_for_request:
+        logging.info(f"Raw tick data for {symbol} is already up-to-date. Skipping raw tick fetch for aggregation.")
+        raw_tick_data = None # No need to fetch if up-to-date
+    else:
+        et_timezone = ZoneInfo("America/New_York")
+        start_et = start_dt_for_request.astimezone(et_timezone).replace(tzinfo=None)
+        end_et = end_dt_for_request.astimezone(et_timezone).replace(tzinfo=None)
+
+        logging.info(f"Fetching raw tick data for aggregation for {symbol} from {start_et} to {end_et}")
+        raw_tick_data = hist_conn.request_ticks_in_period(
+            ticker=symbol,
+            bgn_prd=start_et,
+            end_prd=end_et,
+            ascend=True,
+            max_ticks=None,
+            timeout=600
+        )
+        if raw_tick_data is None or len(raw_tick_data) == 0:
+            logging.warning(f"No raw tick data returned for {symbol} to aggregate.")
+            return
+
+    # If raw tick data was fetched, aggregate and store
+    if raw_tick_data is not None:
+        et_timezone = ZoneInfo("America/New_York") # Ensure timezone is defined for resampling
+        for interval in tick_intervals:
+            logging.info(f"Aggregating raw ticks to {interval}t OHLCV for {symbol}...")
+            ohlc_points = resample_ticks_to_ohlc(
+                raw_ticks=raw_tick_data,
+                tick_interval=interval,
+                symbol=symbol,
+                exchange=exchange,
+                source_timezone=et_timezone, # Use source_timezone for consistency
+                end_time_utc_cutoff=last_session_end_utc
+            )
+
+            if ohlc_points:
+                measurement_name = f"ohlc_{interval}t"
+                logging.info(f"Writing {len(ohlc_points)} {interval}-tick OHLCV points to InfluxDB for '{measurement_name}'.")
+                write_api = influx_pool.get_write_api(0)
+                write_api.write(bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=ohlc_points)
+            else:
+                logging.info(f"No {interval}-tick OHLCV data generated for {symbol}.")
+
 
 class AsyncTickWriter:
     """Asynchronous tick data writer with queue-based processing"""
@@ -597,17 +727,17 @@ def daily_update(symbols_to_update: list, exchange: str, include_ticks: bool = T
             try:
                 # Fetch OHLC bar data
                 fetch_and_store_history(symbol, exchange, hist_conn)
-                
-                # Fetch tick data if requested (OPTIMIZED)
+
+                # Fetch raw tick data and then ingest aggregated tick data if requested (OPTIMIZED)
                 if include_ticks:
                     fetch_and_store_tick_data_optimized(symbol, exchange, hist_conn)
-                    
+                    ingest_aggregated_tick_data(symbol, exchange, hist_conn, [1, 10, 1000]) # Example intervals
+
             except Exception as e:
                 logging.error(f"Error processing symbol {symbol}: {e}", exc_info=True)
                 continue
 
     logging.info("--- Daily Update Process Finished ---")
-
 
 def scheduled_daily_update():
     """
@@ -628,10 +758,10 @@ def manual_tick_data_backfill_optimized(symbols: list, exchange: str, days_back:
     Optimized manual function to backfill tick data for specified symbols.
     """
     logging.info(f"--- Starting OPTIMIZED Manual Tick Data Backfill for {days_back} days ---")
-    
+
     if is_nasdaq_trading_hours():
         logging.warning("Running during trading hours - this may impact performance.")
-    
+
     hist_conn = get_iqfeed_history_conn()
     if hist_conn is None:
         logging.error("Could not get IQFeed connection. Aborting tick data backfill.")
@@ -642,6 +772,8 @@ def manual_tick_data_backfill_optimized(symbols: list, exchange: str, days_back:
             try:
                 logging.info(f"Processing OPTIMIZED tick data for {symbol}...")
                 fetch_and_store_tick_data_optimized(symbol, exchange, hist_conn)
+                ingest_aggregated_tick_data(symbol, exchange, hist_conn, [1, 10, 1000]) # Example intervals
+
             except Exception as e:
                 logging.error(f"Error processing tick data for {symbol}: {e}", exc_info=True)
                 continue
