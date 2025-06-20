@@ -1,4 +1,3 @@
-# app/historical_data_service.py
 import logging
 from datetime import datetime, timezone as dt_timezone
 from typing import List
@@ -23,10 +22,6 @@ query_api = influx_client.query_api()
 
 INITIAL_FETCH_LIMIT = 5000
 
-# Helper function to check if an interval is tick-based
-def is_tick_interval(interval_val: str) -> bool:
-    return interval_val.endswith('t')
-
 def get_initial_historical_data(
     session_token: str,
     exchange: str,
@@ -38,7 +33,6 @@ def get_initial_historical_data(
 ) -> schemas.HistoricalDataResponse:
     """
     Main entry point for fetching historical data. It now correctly handles timezones for queries.
-    Also supports tick-based intervals by querying appropriate measurements.
     """
     try:
         client_tz = ZoneInfo(timezone)
@@ -46,10 +40,6 @@ def get_initial_historical_data(
         logging.warning(f"Invalid timezone '{timezone}' provided by client. Defaulting to UTC.")
         client_tz = ZoneInfo("UTC")
 
-    # For tick intervals, start_time and end_time might be less relevant for the DB query itself
-    # as we query by count of ticks. However, we still pass them for cache key consistency.
-    # The InfluxDB query for tick data will rely on the measurement name.
-    
     start_time_aware = start_time.replace(tzinfo=client_tz)
     end_time_aware = end_time.replace(tzinfo=client_tz)
 
@@ -72,20 +62,10 @@ def get_initial_historical_data(
     if not full_data:
         logging.info(f"Cache MISS for {request_id}. Querying InfluxDB...")
         try:
-            # Determine measurement based on interval type
-            measurement_name = ""
-            if is_tick_interval(interval_val):
-                measurement_name = f"ohlc_{interval_val}"
-                # For tick intervals, the range filter will still apply but the number of bars
-                # is determined by the aggregation logic in the ingestion service.
-                # We fetch all data within the time range and then slice.
-            else:
-                measurement_name = f"ohlc_{interval_val}"
-
             flux_query = f"""
                 from(bucket: "{settings.INFLUX_BUCKET}")
                   |> range(start: {start_time_utc.isoformat().replace('+00:00', 'Z')}, stop: {end_time_utc.isoformat().replace('+00:00', 'Z')})
-                  |> filter(fn: (r) => r._measurement == "{measurement_name}")
+                  |> filter(fn: (r) => r._measurement == "ohlc_{interval_val}")
                   |> filter(fn: (r) => r.symbol == "{token}")
                   |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
                   |> sort(columns: ["_time"])
@@ -105,8 +85,6 @@ def get_initial_historical_data(
                 for record in table.records:
                     utc_dt = record.get_time()
                     local_dt = utc_dt.astimezone(target_tz)
-                    # This "fake UTC" conversion is needed for Lightweight Charts to correctly display time on x-axis
-                    # by treating the local time as if it were UTC.
                     fake_utc_dt = datetime(
                         local_dt.year, local_dt.month, local_dt.day,
                         local_dt.hour, local_dt.minute, local_dt.second,
@@ -115,7 +93,7 @@ def get_initial_historical_data(
                     unix_timestamp_for_chart = fake_utc_dt.timestamp()
 
                     full_data.append(schemas.Candle(
-                        # timestamp=utc_dt, # Original timestamp, good for debug
+                        timestamp=utc_dt,
                         open=record['open'],
                         high=record['high'],
                         low=record['low'],

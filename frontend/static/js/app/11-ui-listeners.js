@@ -6,38 +6,15 @@ import { takeScreenshot, recreateMainSeries, applySeriesColors, applyVolumeColor
 import { loadChartData } from './6-api-service.js';
 import { connectToLiveDataFeed, connectToLiveHeikinAshiData, disconnectFromAllLiveFeeds } from './9-websocket-service.js';
 
-function isTickInterval(interval) {
-    return interval.endsWith('t');
-}
-
 export function setupUiListeners() {
     // Main chart controls
     [elements.exchangeSelect, elements.symbolSelect, elements.intervalSelect, elements.startTimeInput, elements.endTimeInput, elements.timezoneSelect, elements.candleTypeSelect].forEach(control => {
-        control.addEventListener('change', () => {
-            const selectedInterval = elements.intervalSelect.value;
-            // Disable live toggle if a tick-based interval is selected
-            elements.liveToggle.disabled = isTickInterval(selectedInterval);
-            if (isTickInterval(selectedInterval) && elements.liveToggle.checked) {
-                elements.liveToggle.checked = false; // Turn off live mode if tick interval is selected
-                disconnectFromAllLiveFeeds();
-                showToast("Live mode is not supported for tick intervals.", 'warning');
-            }
-            loadChartData();
-        });
+        control.addEventListener('change', () => loadChartData());
     });
-
+    
     // Live Toggle
     elements.liveToggle.addEventListener('change', () => {
         const isLive = elements.liveToggle.checked;
-        const selectedInterval = elements.intervalSelect.value;
-        if (isTickInterval(selectedInterval)) {
-            // This should ideally not happen due to the disabled property, but as a safeguard
-            elements.liveToggle.checked = false;
-            disconnectFromAllLiveFeeds();
-            showToast("Live mode is not supported for tick intervals.", 'warning');
-            return;
-        }
-
         if (isLive) {
             setAutomaticDateTime();
             loadChartData(); // This will also trigger the appropriate live connection
@@ -62,7 +39,7 @@ export function setupUiListeners() {
 
     // Settings Modal Listeners
     setupSettingsModalListeners();
-
+    
     // NEW: Add Sidebar Toggle Listener
     setupSidebarToggleListener();
 
@@ -73,7 +50,7 @@ export function setupUiListeners() {
 function setupSettingsModalListeners() {
     elements.gridColorInput.addEventListener('input', () => state.mainChart.applyOptions({ grid: { vertLines: { color: elements.gridColorInput.value }, horzLines: { color: elements.gridColorInput.value } } }));
     elements.watermarkInput.addEventListener('input', () => state.mainChart.applyOptions({ watermark: { text: elements.watermarkInput.value } }));
-
+    
     [elements.upColorInput, elements.downColorInput, elements.wickUpColorInput, elements.wickDownColorInput, elements.disableWicksInput].forEach(input => {
         input.addEventListener('change', applySeriesColors);
     });
@@ -96,7 +73,7 @@ function setupSidebarToggleListener() {
         const toggleSidebar = (event) => {
             // Log to the console for debugging
             console.log('Sidebar toggle initiated by:', event.currentTarget);
-
+            
             elements.sidebar.classList.toggle('open');
             elements.sidebarOverlay.classList.toggle('hidden');
         };
