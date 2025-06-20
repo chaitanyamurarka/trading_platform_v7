@@ -7,17 +7,67 @@ import { loadChartData } from './6-api-service.js';
 import { connectToLiveDataFeed, connectToLiveHeikinAshiData, disconnectFromAllLiveFeeds } from './9-websocket-service.js';
 
 export function setupUiListeners() {
-    // Main chart controls
-    [elements.exchangeSelect, elements.symbolSelect, elements.intervalSelect, elements.startTimeInput, elements.endTimeInput, elements.timezoneSelect, elements.candleTypeSelect].forEach(control => {
-        control.addEventListener('change', () => loadChartData());
+    // --- MODIFICATION START ---
+    // Controls that trigger a full data reload.
+    // Interval and Candle Type have dedicated listeners below.
+    [elements.exchangeSelect, elements.symbolSelect, elements.startTimeInput, elements.endTimeInput, elements.timezoneSelect].forEach(control => {
+        control.addEventListener('change', () => loadChartData(true));
     });
+
+    /**
+     * Handles changes to the interval select dropdown.
+     * Validates that the new interval is compatible with the selected candle type.
+     */
+    elements.intervalSelect.addEventListener('change', () => {
+        const newInterval = elements.intervalSelect.value;
+        const currentCandleType = elements.candleTypeSelect.value;
+
+        // Validation: Prevent selecting a tick interval while on Heikin Ashi.
+        if (newInterval.endsWith('tick') && currentCandleType === 'heikin_ashi') {
+            showToast('Heikin Ashi is not compatible with Tick intervals.', 'error');
+            elements.intervalSelect.value = state.interval; // Revert to last valid interval.
+            return;
+        }
+        
+        // Update state and reload chart
+        state.interval = newInterval;
+        if (state.interval.endsWith('tick')) {
+            state.candleType = 'tick';
+        } else {
+            // If we switched from a tick interval, sync state.candleType with the UI.
+            state.candleType = currentCandleType;
+        }
+        loadChartData(true);
+    });
+
+    /**
+     * Handles changes to the candle type select dropdown.
+     * Validates that the new candle type is compatible with the selected interval.
+     */
+    elements.candleTypeSelect.addEventListener('change', () => {
+        const newCandleType = elements.candleTypeSelect.value;
+        const currentInterval = elements.intervalSelect.value;
+
+        // Validation: Prevent selecting Heikin Ashi while on a tick interval.
+        if (newCandleType === 'heikin_ashi' && currentInterval.endsWith('tick')) {
+            showToast('Heikin Ashi is not compatible with Tick intervals.', 'error');
+            // Revert to last valid candle type. If it was 'tick', show 'regular' in the UI.
+            elements.candleTypeSelect.value = state.candleType === 'tick' ? 'regular' : state.candleType;
+            return;
+        }
+
+        // Update state and reload chart
+        state.candleType = newCandleType;
+        loadChartData(true);
+    });
+    // --- MODIFICATION END ---
     
     // Live Toggle
     elements.liveToggle.addEventListener('change', () => {
         const isLive = elements.liveToggle.checked;
         if (isLive) {
             setAutomaticDateTime();
-            loadChartData(); // This will also trigger the appropriate live connection
+            loadChartData(true);
         } else {
             disconnectFromAllLiveFeeds();
         }
@@ -40,13 +90,14 @@ export function setupUiListeners() {
     // Settings Modal Listeners
     setupSettingsModalListeners();
     
-    // NEW: Add Sidebar Toggle Listener
+    // Sidebar Toggle Listener
     setupSidebarToggleListener();
 
-    // NEW: Add Settings Tabs Listeners
-    setupSettingsTabsListeners(); // Add this line
+    // Settings Tabs Listeners
+    setupSettingsTabsListeners();
 }
 
+// Unchanged functions below...
 function setupSettingsModalListeners() {
     elements.gridColorInput.addEventListener('input', () => state.mainChart.applyOptions({ grid: { vertLines: { color: elements.gridColorInput.value }, horzLines: { color: elements.gridColorInput.value } } }));
     elements.watermarkInput.addEventListener('input', () => state.mainChart.applyOptions({ watermark: { text: elements.watermarkInput.value } }));
@@ -67,11 +118,9 @@ function setupSettingsModalListeners() {
     });
 }
 
-// NEW: Function to handle sidebar toggling
 function setupSidebarToggleListener() {
     if (elements.menuToggle && elements.sidebar && elements.sidebarOverlay) {
         const toggleSidebar = (event) => {
-            // Log to the console for debugging
             console.log('Sidebar toggle initiated by:', event.currentTarget);
             
             elements.sidebar.classList.toggle('open');
@@ -81,12 +130,10 @@ function setupSidebarToggleListener() {
         elements.menuToggle.addEventListener('click', toggleSidebar);
         elements.sidebarOverlay.addEventListener('click', toggleSidebar);
     } else {
-        // This will show an error in the console if the elements aren't found
         console.error('Could not find all required elements for sidebar toggle functionality.');
     }
 }
 
-// NEW: Function to handle settings tabs
 function setupSettingsTabsListeners() {
     const tabsContainer = elements.settingsModal.querySelector('.tabs');
     if (!tabsContainer) return;
@@ -95,11 +142,9 @@ function setupSettingsTabsListeners() {
         const clickedTab = event.target.closest('.tab');
         if (!clickedTab) return;
 
-        // Remove active class from all tabs and add to clicked tab
         tabsContainer.querySelectorAll('.tab').forEach(tab => tab.classList.remove('tab-active'));
         clickedTab.classList.add('tab-active');
 
-        // Hide all tab contents and show the selected one
         const tabContents = elements.settingsModal.querySelectorAll('.tab-content');
         tabContents.forEach(content => content.classList.add('hidden'));
 

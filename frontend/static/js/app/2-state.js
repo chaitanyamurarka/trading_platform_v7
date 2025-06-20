@@ -22,6 +22,9 @@ export const state = {
     // Flags
     isLive: false,
     currentlyFetching: false,
+
+    // Time Interval
+    interval: '1m',
     
     // State for Regular Candle Data
     chartRequestId: null,
