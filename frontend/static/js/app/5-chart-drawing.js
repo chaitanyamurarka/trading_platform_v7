@@ -22,10 +22,16 @@ export function recreateMainSeries(type) {
             state.mainSeries = state.mainChart.addCandlestickSeries(seriesOptions);
             break;
     }
-    if (state.allChartData.length > 0) {
-        state.mainSeries.setData(state.allChartData);
+    
+    // --- FIX START ---
+    // Use the state helper to get the correct data array for the currently active chart type.
+    const currentData = state.getCurrentChartData();
+    if (currentData.length > 0) {
+        state.mainSeries.setData(currentData);
     }
+    // --- FIX END ---
 }
+
 
 export function applySeriesColors() {
     if (!state.mainSeries) return;

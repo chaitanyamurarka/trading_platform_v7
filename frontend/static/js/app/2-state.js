@@ -17,7 +17,7 @@ export const state = {
     sessionToken: null,
     heartbeatIntervalId: null,
     showOHLCLegend: true,
-    candleType: 'regular', // 'regular' or 'heikin_ashi'
+    candleType: 'regular', // 'regular' or 'heikin_ashi' or 'tick'
 
     // Flags
     isLive: false,
@@ -44,14 +44,32 @@ export const state = {
     tickCurrentOffset: 0,
     allTickDataLoaded: false,
 
-        // Helper method to get current chart data based on candle type
+    // Helper method to get current chart data based on candle type
     getCurrentChartData() {
-        return this.candleType === 'heikin_ashi' ? this.allHeikinAshiData : this.allChartData;
+        // --- FIX START ---
+        // Add the 'tick' case to return the correct data array.
+        if (this.candleType === 'heikin_ashi') {
+            return this.allHeikinAshiData;
+        } else if (this.candleType === 'tick') {
+            return this.allTickData;
+        } else {
+            return this.allChartData;
+        }
+        // --- FIX END ---
     },
     
     // Helper method to get current volume data based on candle type
     getCurrentVolumeData() {
-        return this.candleType === 'heikin_ashi' ? this.allHeikinAshiVolumeData : this.allVolumeData;
+        // --- FIX START ---
+        // Also update this helper for consistency with volume data.
+        if (this.candleType === 'heikin_ashi') {
+            return this.allHeikinAshiVolumeData;
+        } else if (this.candleType === 'tick') {
+            return this.allTickVolumeData;
+        } else {
+            return this.allVolumeData;
+        }
+        // --- FIX END ---
     },
     
     // Helper method to get current request ID based on candle type
