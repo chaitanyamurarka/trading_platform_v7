@@ -61,7 +61,7 @@ def get_latest_timestamp_from_influx(symbol: str, measurement: str = "ohlc_1s") 
         return None
 
 
-class LiveBarListener(iq.SilentBarListener):
+class LiveBarListener(iq.VerboseBarListener):
     """
     A listener that processes 1-second bars from BarConn, logs a summary when
     backfill is complete, and silently processes live data.
