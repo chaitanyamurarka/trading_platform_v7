@@ -41,64 +41,62 @@ async function fetchHistoricalData(url) {
     return response.json();
 }
 
+async function fetchTickDataChunk(cursor) {
+    // The new endpoint doesn't need offset, just the cursor which is stored in request_id
+    const url = `/tick/chunk?request_id=${encodeURIComponent(cursor)}&limit=${constants.DATA_CHUNK_SIZE}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Network error' }));
+        throw new Error(error.detail);
+    }
+    return response.json();
+}
 
-export async function fetchAndPrependRegularCandleChunk() {
-    // This function remains the same, but we will call it for ticks as well
-    const isTickChart = state.candleType === 'tick';
-    const requestId = isTickChart ? state.tickRequestId : state.chartRequestId;
-    let currentOffset = isTickChart ? state.tickCurrentOffset : state.chartCurrentOffset;
-
-    if (currentOffset <= 0) {
-        if (isTickChart) state.allTickDataLoaded = true;
-        else state.allDataLoaded = true;
+export async function fetchAndPrependTickChunk() {
+    if (state.allTickDataLoaded || state.currentlyFetching || !state.tickRequestId) {
         return;
     }
 
-    const nextOffset = currentOffset - constants.DATA_CHUNK_SIZE;
-    
     state.currentlyFetching = true;
     elements.loadingIndicator.style.display = 'flex';
 
     try {
-        const chunkUrl = isTickChart 
-            ? `/tick/chunk?request_id=${requestId}&offset=${nextOffset}&limit=${constants.DATA_CHUNK_SIZE}`
-            : getHistoricalDataChunkUrl(requestId, nextOffset, constants.DATA_CHUNK_SIZE);
-            
-        const chunkData = await fetchHistoricalData(chunkUrl);
+        // Fetch the next chunk using the stored cursor (which is in tickRequestId)
+        const chunkData = await fetchTickDataChunk(state.tickRequestId);
 
         if (chunkData && chunkData.candles.length > 0) {
             const chartFormattedData = chunkData.candles.map(c => ({ time: c.unix_timestamp, open: c.open, high: c.high, low: c.low, close: c.close }));
             const volumeFormattedData = chunkData.candles.map(c => ({ time: c.unix_timestamp, value: c.volume, color: c.close >= c.open ? elements.volUpColorInput.value + '80' : elements.volDownColorInput.value + '80' }));
 
-            if (isTickChart) {
-                state.allTickData = [...chartFormattedData, ...state.allTickData];
-                state.allTickVolumeData = [...volumeFormattedData, ...state.allTickVolumeData];
-                state.mainSeries.setData(state.allTickData);
-                state.volumeSeries.setData(state.allTickVolumeData);
-                state.tickCurrentOffset = chunkData.offset;
-                if (state.tickCurrentOffset === 0) state.allTickDataLoaded = true;
+            state.allTickData = [...chartFormattedData, ...state.allTickData];
+            state.allTickVolumeData = [...volumeFormattedData, ...state.allTickVolumeData];
+            
+            // This is important: re-apply the full dataset to the chart
+            state.mainSeries.setData(state.allTickData);
+            state.volumeSeries.setData(state.allTickVolumeData);
+
+            // Update the cursor for the next request
+            state.tickRequestId = chunkData.request_id;
+
+            // Check if this was the last page
+            if (!chunkData.is_partial || !chunkData.request_id) {
+                state.allTickDataLoaded = true;
+                showToast('Loaded all available tick data.', 'info');
             } else {
-                state.allChartData = [...chartFormattedData, ...state.allChartData];
-                state.allVolumeData = [...volumeFormattedData, ...state.allVolumeData];
-                state.mainSeries.setData(state.allChartData);
-                state.volumeSeries.setData(state.allVolumeData);
-                state.chartCurrentOffset = chunkData.offset;
-                if (state.chartCurrentOffset === 0) state.allDataLoaded = true;
+                showToast(`Loaded ${chunkData.candles.length} older tick bars`, 'success');
             }
-            showToast(`Loaded ${chunkData.candles.length} older bars`, 'success');
         } else {
-            if (isTickChart) state.allTickDataLoaded = true;
-            else state.allDataLoaded = true;
+            // No more data to load
+            state.allTickDataLoaded = true;
         }
     } catch (error) {
-        console.error("Failed to prepend data chunk:", error);
-        showToast("Could not load older data.", 'error');
+        console.error("Failed to prepend tick data chunk:", error);
+        showToast("Could not load older tick data.", 'error');
     } finally {
         elements.loadingIndicator.style.display = 'none';
         state.currentlyFetching = false;
     }
 }
-
 
 export async function fetchAndPrependHeikinAshiChunk() {
     const nextOffset = state.heikinAshiCurrentOffset - constants.DATA_CHUNK_SIZE;
@@ -138,21 +136,15 @@ export async function fetchAndPrependHeikinAshiChunk() {
     }
 }
 
-
-// Modified loadChartData to be more generic
 export async function loadChartData() {
     if (!state.sessionToken) return;
 
-    // Determine chart type based on selected interval
+    // This part is important for determining which data to load
     const selectedInterval = elements.intervalSelect.value;
-    if (selectedInterval.includes('tick')) {
-        state.candleType = 'tick';
-    } else {
-        // Use the dedicated candle type selector for regular vs. heikin ashi
-        state.candleType = elements.candleTypeSelect.value;
-    }
+    const isTickChart = selectedInterval.includes('tick');
+    state.candleType = isTickChart ? 'tick' : elements.candleTypeSelect.value;
     
-    // Clear all data arrays and reset state
+    // Reset all data states
     state.resetAllData();
     disconnectFromAllLiveFeeds();
 
@@ -171,8 +163,11 @@ export async function loadChartData() {
             elements.timezoneSelect.value
         ];
 
-        if (state.candleType === 'tick') {
-            responseData = await fetchInitialTickData(...args);
+        // Fetch initial data based on type
+        if (isTickChart) {
+            // For ticks, we use the new endpoint structure.
+            const url = getTickDataUrl(...args); // You will need to create this simple helper
+            responseData = await fetchHistoricalData(url); // Re-use the fetch helper
         } else if (state.candleType === 'heikin_ashi') {
             responseData = await fetchHeikinAshiData(...args);
         } else {
@@ -188,9 +183,9 @@ export async function loadChartData() {
         }
 
         // Process and display the data
+        // The 'tick' case in processInitialData will handle storing the cursor
         state.processInitialData(responseData, state.candleType);
         showToast(responseData.message, 'success');
-
         // Connect to live feed if applicable (Note: live tick data is not implemented in this version)
         if (isLive) {
             if (state.candleType === 'heikin_ashi') {

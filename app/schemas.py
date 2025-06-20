@@ -10,6 +10,8 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from enum import Enum
 
+# --- NO CHANGES TO EXISTING SCHEMAS ---
+
 class Interval(str, Enum):
     """Enumeration of allowed timeframe intervals for OHLC data."""
     # Tick-based intervals
@@ -38,13 +40,16 @@ class CandleBase(BaseModel):
     Base schema for a single OHLC (Open, High, Low, Close) data point.
     The UNIX timestamp is now provided directly by the InfluxDB query.
     """
-    # The datetime timestamp can be kept for logging/debugging or removed if not needed.
     open: float = Field(..., description="The opening price for the candle period.")
     high: float = Field(..., description="The highest price for the candle period.")
     low: float = Field(..., description="The lowest price for the candle period.")
     close: float = Field(..., description="The closing price for the candle period.")
     volume: Optional[float] = Field(None, description="The trading volume for the candle period.")
     unix_timestamp: float = Field(..., description="The timestamp represented as a UNIX epoch float.")
+    
+    # Add a regular timestamp field for internal use on the backend
+    timestamp: Optional[datetime] = Field(None, exclude=True) # Exclude from API response
+
 class Candle(CandleBase):
     """
     Represents a single OHLC candle, configured for ORM (Object-Relational Mapping) mode.
@@ -80,7 +85,6 @@ class CandleType(str, Enum):
     """Enumeration of supported candle types."""
     REGULAR = "regular"
     HEIKIN_ASHI = "heikin_ashi"
-    # Adding tick type for clarity, though it's handled by interval
     TICK = "tick"
 
 class HeikinAshiCandle(BaseModel):
@@ -92,7 +96,6 @@ class HeikinAshiCandle(BaseModel):
     volume: Optional[float] = Field(None, description="Trading volume")
     unix_timestamp: float = Field(..., description="UNIX timestamp")
     
-    # Additional fields for debugging/analysis
     regular_open: Optional[float] = Field(None, description="Original OHLC open")
     regular_close: Optional[float] = Field(None, description="Original OHLC close")
 
@@ -111,3 +114,32 @@ class HeikinAshiDataChunkResponse(BaseModel):
     offset: int = Field(description="Starting offset of this chunk")
     limit: int = Field(description="Number of candles requested")
     total_available: int = Field(description="Total candles available")
+
+# --- NEW SCHEMAS FOR TICK PAGINATION ---
+
+class TickDataResponse(BaseModel):
+    """
+    Defines the structured response for a tick data request, designed for
+    cursor-based pagination. It mirrors the structure of HistoricalDataResponse
+    to minimize frontend changes.
+    """
+    request_id: Optional[str] = Field(None, description="A cursor for fetching the next chunk of data.")
+    candles: List[Candle]
+    is_partial: bool
+    message: str
+    # Dummy fields to match the expected structure on the frontend
+    offset: int = 0
+    total_available: int = 0
+    
+class TickDataChunkResponse(BaseModel):
+    """
+    Defines the response for a subsequent chunk of tick data. Mirrors the
+    structure of HistoricalDataChunkResponse.
+    """
+    request_id: Optional[str] = Field(None, description="The new cursor for the next page.")
+    candles: List[Candle]
+    is_partial: bool
+    # Dummy fields
+    offset: int = 0
+    limit: int = 5000
+    total_available: int = 0
