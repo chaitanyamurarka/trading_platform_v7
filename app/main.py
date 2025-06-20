@@ -24,10 +24,19 @@ from .middleware.rate_limiting import RateLimitMiddleware
 # Temporily Commenting this
 # from .core import strategy_loader
 # from .services.live_data_feed_service import live_feed_service
-from .routers import historical_data_router, utility_router, live_data_router, heikin_ashi_router, heikin_ashi_live_router
-
+from .routers import (
+        historical_data_router, 
+        utility_router, 
+        live_data_router, 
+        heikin_ashi_router, 
+        heikin_ashi_live_router,
+        tick_data_router
+)
 # NEW IMPORTS for connection manager
-from .websocket_manager import startup_connection_manager, shutdown_connection_manager
+from .websocket_manager import (
+        startup_connection_manager, 
+        shutdown_connection_manager
+)
 
 # --- Basic Logging Configuration ---
 logging.basicConfig(
@@ -125,7 +134,10 @@ app.include_router(historical_data_router.router)
 app.include_router(utility_router.router)
 app.include_router(live_data_router.router)
 app.include_router(heikin_ashi_router.router)
-app.include_router(heikin_ashi_live_router.router) # Include the new router
+app.include_router(heikin_ashi_live_router.router)
+# NEW: Include the tick data router
+app.include_router(tick_data_router.router)
+
 
 # --- Root Endpoint (UNCHANGED) ---
 

@@ -5,8 +5,24 @@ import * as elements from './1-dom-elements.js';
 import { showToast } from './4-ui-helpers.js';
 import { connectToLiveDataFeed, connectToLiveHeikinAshiData, disconnectFromAllLiveFeeds } from './9-websocket-service.js';
 
-async function fetchInitialHistoricalData(sessionToken, exchange, token, interval, startTime, endTime, timezone) {
-    const url = getHistoricalDataUrl(sessionToken, exchange, token, interval, startTime, endTime, timezone);
+// NEW: Function to get the URL for the new tick endpoint
+function getTickDataUrl(sessionToken, exchange, token, interval, startTime, endTime, timezone) {
+    const params = new URLSearchParams({
+        session_token: sessionToken,
+        exchange: exchange,
+        token: token,
+        interval: interval,
+        start_time: startTime,
+        end_time: endTime,
+        timezone: timezone
+    });
+    // Note the new endpoint path `/tick/`
+    return `/tick/?${params.toString()}`;
+}
+
+// NEW: Function to fetch the initial set of tick data
+async function fetchInitialTickData(sessionToken, exchange, token, interval, startTime, endTime, timezone) {
+    const url = getTickDataUrl(sessionToken, exchange, token, interval, startTime, endTime, timezone);
     const response = await fetch(url);
     if (!response.ok) {
         const error = await response.json().catch(() => ({ detail: 'Network error' }));
@@ -15,8 +31,8 @@ async function fetchInitialHistoricalData(sessionToken, exchange, token, interva
     return response.json();
 }
 
-async function fetchHistoricalChunk(requestId, offset, limit) {
-    const url = getHistoricalDataChunkUrl(requestId, offset, limit);
+// Re-using existing function for fetching historical data
+async function fetchHistoricalData(url) {
     const response = await fetch(url);
     if (!response.ok) {
         const error = await response.json().catch(() => ({ detail: 'Network error' }));
@@ -24,36 +40,55 @@ async function fetchHistoricalChunk(requestId, offset, limit) {
     }
     return response.json();
 }
+
 
 export async function fetchAndPrependRegularCandleChunk() {
-    const nextOffset = state.chartCurrentOffset - constants.DATA_CHUNK_SIZE;
-    if (nextOffset < 0) {
-        state.allDataLoaded = true;
+    // This function remains the same, but we will call it for ticks as well
+    const isTickChart = state.candleType === 'tick';
+    const requestId = isTickChart ? state.tickRequestId : state.chartRequestId;
+    let currentOffset = isTickChart ? state.tickCurrentOffset : state.chartCurrentOffset;
+
+    if (currentOffset <= 0) {
+        if (isTickChart) state.allTickDataLoaded = true;
+        else state.allDataLoaded = true;
         return;
     }
 
+    const nextOffset = currentOffset - constants.DATA_CHUNK_SIZE;
+    
     state.currentlyFetching = true;
     elements.loadingIndicator.style.display = 'flex';
 
     try {
-        const chunkData = await fetchHistoricalChunk(state.chartRequestId, nextOffset, constants.DATA_CHUNK_SIZE);
+        const chunkUrl = isTickChart 
+            ? `/tick/chunk?request_id=${requestId}&offset=${nextOffset}&limit=${constants.DATA_CHUNK_SIZE}`
+            : getHistoricalDataChunkUrl(requestId, nextOffset, constants.DATA_CHUNK_SIZE);
+            
+        const chunkData = await fetchHistoricalData(chunkUrl);
+
         if (chunkData && chunkData.candles.length > 0) {
             const chartFormattedData = chunkData.candles.map(c => ({ time: c.unix_timestamp, open: c.open, high: c.high, low: c.low, close: c.close }));
             const volumeFormattedData = chunkData.candles.map(c => ({ time: c.unix_timestamp, value: c.volume, color: c.close >= c.open ? elements.volUpColorInput.value + '80' : elements.volDownColorInput.value + '80' }));
 
-            state.allChartData = [...chartFormattedData, ...state.allChartData];
-            state.allVolumeData = [...volumeFormattedData, ...state.allVolumeData];
-            state.mainSeries.setData(state.allChartData);
-            state.volumeSeries.setData(state.allVolumeData);
-            state.chartCurrentOffset = chunkData.offset;
-
-            if (state.chartCurrentOffset === 0) {
-                state.allDataLoaded = true;
+            if (isTickChart) {
+                state.allTickData = [...chartFormattedData, ...state.allTickData];
+                state.allTickVolumeData = [...volumeFormattedData, ...state.allTickVolumeData];
+                state.mainSeries.setData(state.allTickData);
+                state.volumeSeries.setData(state.allTickVolumeData);
+                state.tickCurrentOffset = chunkData.offset;
+                if (state.tickCurrentOffset === 0) state.allTickDataLoaded = true;
+            } else {
+                state.allChartData = [...chartFormattedData, ...state.allChartData];
+                state.allVolumeData = [...volumeFormattedData, ...state.allVolumeData];
+                state.mainSeries.setData(state.allChartData);
+                state.volumeSeries.setData(state.allVolumeData);
+                state.chartCurrentOffset = chunkData.offset;
+                if (state.chartCurrentOffset === 0) state.allDataLoaded = true;
             }
-
-            showToast(`Loaded ${chunkData.candles.length} older candles`, 'success');
+            showToast(`Loaded ${chunkData.candles.length} older bars`, 'success');
         } else {
-            state.allDataLoaded = true;
+            if (isTickChart) state.allTickDataLoaded = true;
+            else state.allDataLoaded = true;
         }
     } catch (error) {
         console.error("Failed to prepend data chunk:", error);
@@ -104,124 +139,73 @@ export async function fetchAndPrependHeikinAshiChunk() {
 }
 
 
-export async function loadInitialChart() {
-    state.currentlyFetching = true;
-    elements.loadingIndicator.style.display = 'flex';
-    state.allDataLoaded = false;
+// Modified loadChartData to be more generic
+export async function loadChartData() {
+    if (!state.sessionToken) return;
 
+    // Determine chart type based on selected interval
+    const selectedInterval = elements.intervalSelect.value;
+    if (selectedInterval.includes('tick')) {
+        state.candleType = 'tick';
+    } else {
+        // Use the dedicated candle type selector for regular vs. heikin ashi
+        state.candleType = elements.candleTypeSelect.value;
+    }
+    
+    // Clear all data arrays and reset state
+    state.resetAllData();
+    disconnectFromAllLiveFeeds();
+
+    elements.loadingIndicator.style.display = 'flex';
+    
     try {
-        const responseData = await fetchInitialHistoricalData(state.sessionToken, elements.exchangeSelect.value, elements.symbolSelect.value, elements.intervalSelect.value, elements.startTimeInput.value, elements.endTimeInput.value, elements.timezoneSelect.value);
-        if (!responseData || !responseData.request_id || responseData.candles.length === 0) {
-            showToast(responseData.message || 'No historical data found.', 'warning');
-            if (state.mainSeries) state.mainSeries.setData([]);
-            if (state.volumeSeries) state.volumeSeries.setData([]);
+        let responseData;
+        const isLive = elements.liveToggle.checked;
+        const args = [
+            state.sessionToken, 
+            elements.exchangeSelect.value, 
+            elements.symbolSelect.value, 
+            selectedInterval, 
+            elements.startTimeInput.value, 
+            elements.endTimeInput.value, 
+            elements.timezoneSelect.value
+        ];
+
+        if (state.candleType === 'tick') {
+            responseData = await fetchInitialTickData(...args);
+        } else if (state.candleType === 'heikin_ashi') {
+            responseData = await fetchHeikinAshiData(...args);
+        } else {
+            const url = getHistoricalDataUrl(...args);
+            responseData = await fetchHistoricalData(url);
+        }
+
+        if (!responseData || !responseData.candles || responseData.candles.length === 0) {
+            showToast(responseData?.message || 'No data found for the selection.', 'warning');
+            state.mainSeries.setData([]);
+            state.volumeSeries.setData([]);
             return;
         }
-        state.chartRequestId = responseData.request_id;
-        state.chartCurrentOffset = responseData.offset;
-        if (state.chartCurrentOffset === 0 && !responseData.is_partial) state.allDataLoaded = true;
 
-        state.allChartData = responseData.candles.map(c => ({ time: c.unix_timestamp, open: c.open, high: c.high, low: c.low, close: c.close }));
-        state.allVolumeData = responseData.candles.map(c => ({ time: c.unix_timestamp, value: c.volume, color: c.close >= c.open ? elements.volUpColorInput.value + '80' : elements.volDownColorInput.value + '80' }));
+        // Process and display the data
+        state.processInitialData(responseData, state.candleType);
+        showToast(responseData.message, 'success');
 
-        state.mainSeries.setData(state.allChartData);
-        state.volumeSeries.setData(state.allVolumeData);
-
-        if (state.allChartData.length > 0) {
-            const dataSize = state.allChartData.length;
-            state.mainChart.timeScale().setVisibleLogicalRange({ from: Math.max(0, dataSize - 100), to: dataSize - 1 });
-        } else {
-            state.mainChart.timeScale().fitContent();
+        // Connect to live feed if applicable (Note: live tick data is not implemented in this version)
+        if (isLive) {
+            if (state.candleType === 'heikin_ashi') {
+                connectToLiveHeikinAshiData();
+            } else if (state.candleType === 'regular') {
+                connectToLiveDataFeed();
+            } else {
+                showToast("Live data is not available for tick-based charts.", "info");
+            }
         }
-
-        state.mainChart.priceScale().applyOptions({ autoscale: true });
     } catch (error) {
         console.error('Failed to fetch initial chart data:', error);
         showToast(`Error: ${error.message}`, 'error');
     } finally {
         elements.loadingIndicator.style.display = 'none';
         state.currentlyFetching = false;
-    }
-}
-
-
-export async function loadHeikinAshiChart() {
-    state.currentlyFetching = true;
-    elements.loadingIndicator.style.display = 'flex';
-
-    try {
-        const responseData = await fetchHeikinAshiData(state.sessionToken, elements.exchangeSelect.value, elements.symbolSelect.value, elements.intervalSelect.value, elements.startTimeInput.value, elements.endTimeInput.value, elements.timezoneSelect.value);
-
-        if (!responseData || !responseData.candles || responseData.candles.length === 0) {
-            showToast(responseData?.message || 'No Heikin Ashi data found.', 'warning');
-            if (state.mainSeries) state.mainSeries.setData([]);
-            if (state.volumeSeries) state.volumeSeries.setData([]);
-            return;
-        }
-
-        state.heikinAshiRequestId = responseData.request_id;
-        state.heikinAshiCurrentOffset = responseData.offset || 0;
-        state.allHeikinAshiDataLoaded = !responseData.is_partial;
-
-        state.allHeikinAshiData = responseData.candles.map(c => ({ time: c.unix_timestamp, open: c.open, high: c.high, low: c.low, close: c.close }));
-        state.allHeikinAshiVolumeData = responseData.candles.map(c => ({ time: c.unix_timestamp, value: c.volume || 0, color: c.close >= c.open ? elements.volUpColorInput.value + '80' : elements.volDownColorInput.value + '80' }));
-
-        state.mainSeries.setData(state.allHeikinAshiData);
-        state.volumeSeries.setData(state.allHeikinAshiVolumeData);
-
-        if (state.allHeikinAshiData.length > 0) {
-            const dataSize = state.allHeikinAshiData.length;
-            state.mainChart.timeScale().setVisibleLogicalRange({ from: Math.max(0, dataSize - 100), to: dataSize - 1 });
-        }
-
-        state.mainChart.priceScale().applyOptions({ autoscale: true });
-
-        showToast(`Heikin Ashi data loaded successfully. ${responseData.message}`, 'success');
-
-    } catch (error) {
-        console.error('Failed to fetch Heikin Ashi data:', error);
-        showToast(`Error loading Heikin Ashi data: ${error.message}`, 'error');
-    } finally {
-        elements.loadingIndicator.style.display = 'none';
-        state.currentlyFetching = false;
-    }
-}
-
-
-export async function loadChartData() {
-    if (!state.sessionToken) return;
-
-    if (state.mainSeries) state.mainSeries.setData([]);
-    if (state.volumeSeries) state.volumeSeries.setData([]);
-
-    if (state.candleType === 'heikin_ashi') {
-        state.allHeikinAshiData = [];
-        state.allHeikinAshiVolumeData = [];
-        state.heikinAshiCurrentOffset = 0;
-        state.allHeikinAshiDataLoaded = false;
-        state.heikinAshiRequestId = null;
-    } else {
-        state.allChartData = [];
-        state.allVolumeData = [];
-        state.chartCurrentOffset = 0;
-        state.allDataLoaded = false;
-        state.chartRequestId = null;
-    }
-    
-    disconnectFromAllLiveFeeds();
-
-    try {
-        const isLive = elements.liveToggle.checked;
-
-        if (state.candleType === 'heikin_ashi') {
-            await loadHeikinAshiChart();
-            if (isLive) connectToLiveHeikinAshiData();
-        } else {
-            await loadInitialChart();
-            if (isLive) connectToLiveDataFeed();
-        }
-    } catch (error) {
-        console.error('Error loading chart data:', error);
-        showToast(`Error loading ${state.candleType === 'heikin_ashi' ? 'Heikin Ashi' : 'regular'} data`, 'error');
     }
 }

@@ -4,6 +4,8 @@ from typing import Optional, List, Any
 from .config import settings
 from . import schemas
 from datetime import datetime, timedelta
+import hashlib
+
 
 # Redis connection (URL from environment or defaults)
 REDIS_URL = settings.REDIS_URL
@@ -50,38 +52,39 @@ def build_ohlc_cache_key(
     exchange: str,
     token: str,
     interval: str,
-    start_time: datetime, # Changed from start_time_iso: str
-    end_time: datetime,   # Changed from end_time_iso: str
+    start_time: datetime,
+    end_time: datetime,
     timezone: str,
-    session_token: Optional[str] = None
+    session_token: str,
+    candle_type: str = "regular"
 ) -> str:
     """
-    Builds a consistent cache key for OHLC data queries by aligning timestamps
-    to interval boundaries and using epoch timestamps.
+    Builds a unique cache key for an OHLC data request.
+    Handles both time-based and tick-based intervals.
     """
-    interval_seconds = parse_interval_to_seconds(interval)
-    
-    # Convert datetimes to UTC epoch timestamps for consistent hashing
-    # Ensure datetimes are timezone-aware if they aren't already
-    if start_time.tzinfo is None:
-        start_time = start_time.replace(tzinfo=datetime.now().astimezone().tzinfo) # Assume local timezone if naive
-    if end_time.tzinfo is None:
-        end_time = end_time.replace(tzinfo=datetime.now().astimezone().tzinfo) # Assume local timezone if naive
-
-    start_timestamp = int(start_time.timestamp())
-    end_timestamp = int(end_time.timestamp())
-    
-    # Align to interval boundaries
-    aligned_start = (start_timestamp // interval_seconds) * interval_seconds
-    aligned_end = (end_timestamp // interval_seconds) * interval_seconds
-    
-    # Use epoch timestamps for shorter, more consistent keys
-    base_key = f"ohlc:{exchange}:{token}:{interval}:{aligned_start}:{aligned_end}:{timezone}"
-    
-    if session_token:
-        return f"user:{session_token}:{base_key}"
+    # --- MODIFICATION START ---
+    # Check if the interval is tick-based. If so, use the string itself.
+    # Otherwise, parse it to seconds for time-based intervals.
+    if "tick" in interval:
+        interval_identifier = interval
     else:
-        return f"shared:{base_key}"
+        try:
+            interval_identifier = str(parse_interval_to_seconds(interval))
+        except (ValueError, TypeError):
+            # Fallback for any unexpected format
+            interval_identifier = interval
+    # --- MODIFICATION END ---
+
+    start_str = start_time.strftime('%Y%m%d%H%M%S')
+    end_str = end_time.strftime('%Y%m%d%H%M%S')
+
+    key_string = (
+        f"{candle_type}:{exchange}:{token}:{interval_identifier}:"
+        f"{start_str}:{end_str}:{timezone}:{session_token}"
+    )
+    
+    # Use SHA256 for a consistent and safe key format
+    return hashlib.sha256(key_string.encode()).hexdigest()
 
 def get_cached_heikin_ashi_data(cache_key: str) -> Optional[List[schemas.HeikinAshiCandle]]:
     """Attempts to retrieve and deserialize Heikin Ashi data from Redis cache."""

@@ -12,6 +12,12 @@ from enum import Enum
 
 class Interval(str, Enum):
     """Enumeration of allowed timeframe intervals for OHLC data."""
+    # Tick-based intervals
+    TICK_1 = "1tick"
+    TICK_10 = "10tick"
+    TICK_1000 = "1000tick"
+    
+    # Time-based intervals
     SEC_1 = "1s"
     SEC_5 = "5s"
     SEC_10 = "10s"
@@ -74,6 +80,8 @@ class CandleType(str, Enum):
     """Enumeration of supported candle types."""
     REGULAR = "regular"
     HEIKIN_ASHI = "heikin_ashi"
+    # Adding tick type for clarity, though it's handled by interval
+    TICK = "tick"
 
 class HeikinAshiCandle(BaseModel):
     """Schema for Heikin Ashi candle data."""
