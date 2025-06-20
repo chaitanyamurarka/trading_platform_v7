@@ -9,9 +9,26 @@ import { connectToLiveDataFeed, connectToLiveHeikinAshiData, disconnectFromAllLi
 export function setupUiListeners() {
     // --- MODIFICATION START ---
     // Controls that trigger a full data reload.
-    // Interval and Candle Type have dedicated listeners below.
-    [elements.exchangeSelect, elements.symbolSelect, elements.startTimeInput, elements.endTimeInput, elements.timezoneSelect].forEach(control => {
+    // Interval, Candle Type, and Timezone now have dedicated listeners.
+    [elements.exchangeSelect, elements.symbolSelect, elements.startTimeInput, elements.endTimeInput].forEach(control => {
         control.addEventListener('change', () => loadChartData(true));
+    });
+
+    /**
+     * Handles changes to the timezone select dropdown.
+     * Prevents changing the timezone if Live Mode is active and reverts to the previous state.
+     */
+    elements.timezoneSelect.addEventListener('change', (event) => {
+        if (elements.liveToggle.checked) {
+            showToast('Timezone cannot be changed while Live Mode is active.', 'warning');
+            // Revert the dropdown's visible selection to the previous, valid timezone from the state
+            event.target.value = state.timezone; 
+            return;
+        }
+        // If not in live mode, it's a valid change.
+        // Update the state with the new timezone, then reload the chart.
+        state.timezone = event.target.value;
+        loadChartData(true);
     });
 
     /**

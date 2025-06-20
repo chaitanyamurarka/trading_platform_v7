@@ -25,6 +25,9 @@ export const state = {
 
     // Time Interval
     interval: '1m',
+
+    // Time Zone
+    timezone: 'America/New_York',
     
     // State for Regular Candle Data
     chartRequestId: null,
