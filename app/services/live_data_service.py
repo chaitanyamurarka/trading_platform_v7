@@ -13,8 +13,8 @@ import pandas as pd
 import redis.asyncio as aioredis
 from fastapi import WebSocket
 
-from . import schemas
-from .config import settings
+from .. import schemas
+from ..config import settings
 
 logger = logging.getLogger(__name__)
 

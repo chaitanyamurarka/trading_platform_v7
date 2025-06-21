@@ -3,9 +3,9 @@ from datetime import datetime, timezone as dt_timezone
 from typing import List, Optional
 from fastapi import HTTPException
 
-from . import schemas
-from .cache import get_cached_ohlc_data, build_ohlc_cache_key, build_heikin_ashi_cache_key, get_cached_heikin_ashi_data, set_cached_heikin_ashi_data
-from . import historical_data_service
+from .. import schemas
+from ..cache import get_cached_ohlc_data, build_ohlc_cache_key, build_heikin_ashi_cache_key, get_cached_heikin_ashi_data, set_cached_heikin_ashi_data
+from ..services import historical_data_service
 
 def calculate_heikin_ashi_candles(regular_candles: List[schemas.Candle]) -> List[schemas.HeikinAshiCandle]:
     """

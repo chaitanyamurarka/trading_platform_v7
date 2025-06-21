@@ -6,7 +6,7 @@ import logging
 import asyncio
 
 from ..websocket_manager import connection_manager
-from .. import live_data_service
+from ..services import live_data_service
 
 router = APIRouter(
     prefix="/ws",

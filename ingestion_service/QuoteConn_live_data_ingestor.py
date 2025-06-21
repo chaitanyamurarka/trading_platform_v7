@@ -123,7 +123,7 @@ class LiveTickListener(iq.SilentQuoteListener):
 def main():
     """Main function to start listening to live data."""
     launch_iqfeed_service_if_needed()
-    symbols = ["AAPL", "AMZN", "TSLA", "@NQM25"]
+    symbols = ["AAPL", "AMZN", "TSLA", "@NQ#"]
     
     quote_conn = get_iqfeed_quote_conn()
     hist_conn = get_iqfeed_history_conn()

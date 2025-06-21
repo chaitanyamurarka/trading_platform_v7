@@ -10,8 +10,8 @@ try:
 except ImportError:
     from backports.zoneinfo import ZoneInfo
 
-from . import schemas
-from .config import settings
+from .. import schemas
+from ..config import settings
 from .historical_data_service import query_api, INITIAL_FETCH_LIMIT
 
 def _query_and_process_ticks(flux_query: str, timezone_str: str) -> List[schemas.Candle]:

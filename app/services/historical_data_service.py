@@ -7,9 +7,9 @@ try:
 except ImportError:
     from backports.zoneinfo import ZoneInfo
 
-from . import schemas
-from .cache import get_cached_ohlc_data, set_cached_ohlc_data, build_ohlc_cache_key, CACHE_EXPIRATION_SECONDS
-from .config import settings
+from .. import schemas
+from ..cache import get_cached_ohlc_data, set_cached_ohlc_data, build_ohlc_cache_key, CACHE_EXPIRATION_SECONDS
+from ..config import settings
 from influxdb_client import InfluxDBClient
 
 influx_client = InfluxDBClient(

@@ -398,7 +398,7 @@ def run_tick_ingestion(symbols: List[str], exchange: str, days_to_backfill: int 
 def scheduled_tick_update():
     """Wrapper function for the scheduler."""
     logging.info("--- Triggering Scheduled Tick Update ---")
-    symbols_to_process = ["AAPL", "AMZN", "TSLA", "@NQM25"]
+    symbols_to_process = ["AAPL", "AMZN", "TSLA", "@NQ#"]
     exchange_name = "NASDAQ"
     run_tick_ingestion(symbols_to_process, exchange_name)
 

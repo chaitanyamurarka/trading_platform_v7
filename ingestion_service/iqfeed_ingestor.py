@@ -294,7 +294,7 @@ def scheduled_daily_update():
     Wrapper function for the scheduler. Defines the symbols and exchange to update.
     """
     logging.info("--- Triggering Scheduled Daily Update ---")
-    symbols_to_update = ["AAPL", "AMZN", "TSLA", "@NQM25"]
+    symbols_to_update = ["AAPL", "AMZN", "TSLA", "@NQ#"]
     exchange = "NASDAQ"
     daily_update(symbols_to_update, exchange)
 

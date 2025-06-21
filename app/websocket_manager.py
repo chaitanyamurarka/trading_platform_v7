@@ -13,7 +13,7 @@ from websockets.exceptions import ConnectionClosed
 
 from .config import settings
 from . import schemas
-from .live_data_service import BarResampler, TickBarResampler
+from .services.live_data_service import BarResampler, TickBarResampler
 
 logger = logging.getLogger(__name__)
 

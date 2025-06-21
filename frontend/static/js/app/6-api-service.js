@@ -4,6 +4,7 @@ import { state, constants } from './2-state.js';
 import * as elements from './1-dom-elements.js';
 import { showToast } from './4-ui-helpers.js';
 import { connectToLiveDataFeed, connectToLiveHeikinAshiData, disconnectFromAllLiveFeeds } from './9-websocket-service.js';
+import { applyAutoscaling } from './13-drawing-toolbar-listeners.js';
 
 // NEW: Function to get the URL for the new tick endpoint
 function getTickDataUrl(sessionToken, exchange, token, interval, startTime, endTime, timezone) {
@@ -201,5 +202,6 @@ export async function loadChartData() {
     } finally {
         elements.loadingIndicator.style.display = 'none';
         state.currentlyFetching = false;
+        applyAutoscaling();
     }
 }

@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 
 from .. import schemas
-from .. import tick_historical_data_service
+from ..services import tick_historical_data_service
 
 router = APIRouter(
     prefix="/tick",

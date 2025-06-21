@@ -44,3 +44,31 @@ export function setupDrawingToolbarListeners() {
         autoScaleBtn.classList.remove('btn-active');
     });
 }
+
+export function applyAutoscaling() {
+    const autoScaleBtn = document.getElementById('scaling-auto-btn');
+    const linearScaleBtn = document.getElementById('scaling-linear-btn');
+
+    if (!state.mainChart) return;
+
+    // Apply autoscale to the price and time axes
+    state.mainChart.priceScale().applyOptions({ autoScale: true });
+    state.mainChart.timeScale().applyOptions({ rightOffset: 12 });
+
+    // --- NEW LOGIC ---
+    // Set the visible range to the most recent 100 bars
+    const currentData = state.getCurrentChartData();
+    if (currentData && currentData.length > 0) {
+        const dataSize = currentData.length;
+        state.mainChart.timeScale().setVisibleLogicalRange({
+            from: Math.max(0, dataSize - 100),
+            to: dataSize - 1
+        });
+    }
+    // --- END NEW LOGIC ---
+
+    if(autoScaleBtn && linearScaleBtn) {
+        autoScaleBtn.classList.add('btn-active');
+        linearScaleBtn.classList.remove('btn-active');
+    }
+}

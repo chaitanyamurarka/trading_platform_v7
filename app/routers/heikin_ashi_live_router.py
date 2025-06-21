@@ -6,7 +6,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Path
 from websockets.exceptions import ConnectionClosed
 
-from .. import live_data_service, heikin_ashi_service, schemas
+from ..services import live_data_service, heikin_ashi_service
 from ..config import settings
 import redis.asyncio as aioredis
 

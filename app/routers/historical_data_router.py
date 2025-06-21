@@ -2,7 +2,7 @@ from fastapi import APIRouter, Query, HTTPException
 from datetime import datetime
 
 from .. import schemas
-from .. import historical_data_service
+from ..services import historical_data_service
 
 router = APIRouter(
     prefix="/historical",

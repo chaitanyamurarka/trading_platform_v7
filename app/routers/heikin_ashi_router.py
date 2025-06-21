@@ -2,7 +2,7 @@ from fastapi import APIRouter, Query, HTTPException
 from datetime import datetime
 
 from .. import schemas
-from .. import heikin_ashi_service
+from ..services import heikin_ashi_service
 
 router = APIRouter(
     prefix="/heikin-ashi",
