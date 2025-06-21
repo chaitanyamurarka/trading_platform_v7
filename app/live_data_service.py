@@ -1,3 +1,5 @@
+# app/live_data_service.py
+
 import asyncio
 import json
 import logging
@@ -18,6 +20,61 @@ logger = logging.getLogger(__name__)
 
 # Connect to Redis
 redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+
+
+class TickBarResampler:
+    """
+    Aggregates raw ticks from Redis into OHLCV bars of a specified tick-count interval.
+    This class is stateful and designed to be used per client subscription.
+    """
+
+    def __init__(self, interval_str: str):
+        self.interval_str = interval_str
+        # Correctly parse the number of ticks from interval string like "10tick"
+        self.ticks_per_bar = int(interval_str.replace('tick', ''))
+        self.current_bar: Optional[schemas.Candle] = None
+        self.tick_count = 0
+        logger.info(f"TickBarResampler initialized for interval {interval_str} ({self.ticks_per_bar} ticks per bar)")
+
+    def add_bar(self, tick_data: Dict) -> Optional[schemas.Candle]:
+        """
+        Adds a new tick to the resampler. If a bar is completed, it's returned.
+        Name is kept as add_bar for compatibility with the connection manager.
+        """
+        completed_bar = None
+        
+        price = float(tick_data['price'])
+        volume = int(tick_data['volume'])
+        
+        # The timestamp from the live tick is already a UTC unix timestamp
+        timestamp_unix = tick_data['timestamp']
+        
+        if not self.current_bar:
+            # This is the first tick for a new bar
+            self.current_bar = schemas.Candle(
+                open=price, high=price, low=price, close=price, volume=volume,
+                unix_timestamp=timestamp_unix
+            )
+            self.tick_count = 1
+        else:
+            # This tick updates the current bar
+            self.current_bar.high = max(self.current_bar.high, price)
+            self.current_bar.low = min(self.current_bar.low, price)
+            self.current_bar.close = price
+            self.current_bar.volume += volume
+            # The timestamp of the bar should be the timestamp of the last tick in it
+            self.current_bar.unix_timestamp = timestamp_unix
+            self.tick_count += 1
+        
+        # Check if the bar is complete
+        if self.tick_count >= self.ticks_per_bar:
+            completed_bar = self.current_bar
+            # Reset for the next bar
+            self.current_bar = None
+            self.tick_count = 0
+            
+        return completed_bar
+
 
 class BarResampler:
     """

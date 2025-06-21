@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 async def get_live_data(
     websocket: WebSocket,
     symbol: str = Path(..., description="Asset symbol (e.g., 'AAPL')"),
-    interval: str = Path(..., description="Data interval (e.g., '1m', '5m', '1h')"),
+    interval: str = Path(..., description="Data interval (e.g., '1m', '5m', '10tick')"),
     timezone: str = Path(..., description="Client's IANA timezone (e.g., 'America/New_York')")
 ):
     """
@@ -29,7 +29,8 @@ async def get_live_data(
     Expected 60% reduction in Redis connections vs traditional approach.
 
     - **On Connect**: Immediately sends a batch of all available intra-day
-      data for the current trading session from the cache.
+      data for the current trading session from the cache for time-based intervals.
+      Tick-based intervals do not receive a backfill here.
     - **Live Updates**: Subsequently streams live updates as they occur.
       Each message contains:
         - `completed_bar`: The full OHLCV of the last bar that just finished.
@@ -48,22 +49,22 @@ async def get_live_data(
         
         logger.info(f"WebSocket connection established for {symbol}/{interval} with pooling")
         
-        # Send initial cached data using the original service
-        cached_bars = await live_data_service.get_cached_intraday_bars(symbol, interval, timezone)
-        if cached_bars:
-            await websocket.send_json([bar.model_dump() for bar in cached_bars])
-            logger.info(f"Sent {len(cached_bars)} cached bars to client for {symbol}")
-        
+        # Send initial cached data for time-based intervals ONLY.
+        # Tick-based charts rely on the initial HTTP fetch for history.
+        if 'tick' not in interval:
+            cached_bars = await live_data_service.get_cached_intraday_bars(symbol, interval, timezone)
+            if cached_bars:
+                await websocket.send_json([bar.model_dump() for bar in cached_bars])
+                logger.info(f"Sent {len(cached_bars)} cached bars to client for {symbol}")
+        else:
+            logger.info(f"Skipping intraday backfill for tick-based interval: {interval}")
+
         # Keep connection alive and let connection manager handle Redis subscriptions
         # The connection manager will automatically send updates through its Redis pooling
         while True:
             try:
-                # Keep the connection alive with a longer timeout
-                # The actual data streaming is handled by connection_manager
+                # Keep the connection alive
                 await asyncio.sleep(1)
-                
-                # Optional: Send heartbeat to detect broken connections
-                # This is handled by connection manager's cleanup loop
                 
             except asyncio.CancelledError:
                 logger.info(f"WebSocket task cancelled for {symbol}")

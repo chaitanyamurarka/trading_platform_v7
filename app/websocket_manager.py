@@ -13,7 +13,7 @@ from websockets.exceptions import ConnectionClosed
 
 from .config import settings
 from . import schemas
-from .live_data_service import BarResampler 
+from .live_data_service import BarResampler, TickBarResampler
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class SubscriptionGroup:
     symbol: str
     connections: Set[WebSocket] = field(default_factory=set)
     # NEW: Store stateful resamplers, one for each interval/timezone combination.
-    resamplers: Dict[tuple[str, str], BarResampler] = field(default_factory=dict)
+    resamplers: Dict[tuple[str, str], Any] = field(default_factory=dict) # Can be BarResampler or TickBarResampler
     redis_subscription: Optional[Any] = None
     last_message: Optional[dict] = None
     created_at: datetime = field(default_factory=datetime.now)
@@ -134,8 +134,12 @@ class ConnectionManager:
             # Create a stateful resampler for this new client if one doesn't already exist for this combo
             resampler_key = (interval, timezone)
             if resampler_key not in group.resamplers:
-                group.resamplers[resampler_key] = BarResampler(interval, timezone)
-                logger.info(f"Created new BarResampler for group {symbol}, key: {resampler_key}")
+                if 'tick' in interval:
+                    group.resamplers[resampler_key] = TickBarResampler(interval)
+                    logger.info(f"Created new TickBarResampler for group {symbol}, key: {resampler_key}")
+                else:
+                    group.resamplers[resampler_key] = BarResampler(interval, timezone)
+                    logger.info(f"Created new BarResampler for group {symbol}, key: {resampler_key}")
             
             self.metrics['total_connections'] += 1
             logger.info(f"Added WebSocket connection for {symbol}/{interval} (total: {len(self.connections)})")

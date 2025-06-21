@@ -14,6 +14,42 @@ function autoScrollView() {
     }
 }
 
+/**
+ * Generic handler for processing live bar updates from a WebSocket.
+ * @param {object} data - The payload from the server, containing optional completed_bar and current_bar.
+ */
+function handleLiveUpdate(data) {
+    if (!data || !state.mainSeries) return;
+
+    const { completed_bar, current_bar } = data;
+
+    // A completed bar is a finalized bar from the previous interval.
+    // We update it first to ensure it's locked in on the chart.
+    if (completed_bar) {
+        const completedChartBar = { time: completed_bar.unix_timestamp, open: completed_bar.open, high: completed_bar.high, low: completed_bar.low, close: completed_bar.close };
+        state.mainSeries.update(completedChartBar);
+        if (state.volumeSeries) {
+            const volumeData = { time: completed_bar.unix_timestamp, value: completed_bar.volume, color: completed_bar.close >= completed_bar.open ? elements.volUpColorInput.value + '80' : elements.volDownColorInput.value + '80' };
+            state.volumeSeries.update(volumeData);
+        }
+    }
+
+    // The current bar is the new, in-progress bar for the current interval.
+    // Calling update() with its data will either create it (if its timestamp is new)
+    // or update it (if its timestamp is the same as the last point).
+    if (current_bar) {
+        const currentChartBar = { time: current_bar.unix_timestamp, open: current_bar.open, high: current_bar.high, low: current_bar.low, close: current_bar.close };
+        state.mainSeries.update(currentChartBar);
+        if (state.volumeSeries) {
+            const volumeData = { time: current_bar.unix_timestamp, value: current_bar.volume, color: current_bar.close >= current_bar.open ? elements.volUpColorInput.value + '80' : elements.volDownColorInput.value + '80' };
+            state.volumeSeries.update(volumeData);
+        }
+    }
+    
+    autoScrollView();
+}
+
+
 function handleRegularLiveData(data) {
     if (Array.isArray(data)) { // Handle backfill data
         if (data.length === 0) return;
@@ -31,22 +67,14 @@ function handleRegularLiveData(data) {
             state.mainSeries.setData(state.allChartData);
             state.volumeSeries.setData(state.allVolumeData);
         }
-    } else if (data.current_bar && state.mainSeries) { // Handle live update
-        const { current_bar } = data;
-        const chartFormattedBar = { time: current_bar.unix_timestamp, open: current_bar.open, high: current_bar.high, low: current_bar.low, close: current_bar.close };
-        state.mainSeries.update(chartFormattedBar);
-        if (state.volumeSeries) {
-            const volumeData = { time: current_bar.unix_timestamp, value: current_bar.volume, color: current_bar.close >= current_bar.open ? elements.volUpColorInput.value + '80' : elements.volDownColorInput.value + '80' };
-            state.volumeSeries.update(volumeData);
-        }
-        autoScrollView();
+    } else { // Handle live update for both regular and tick-based charts
+        handleLiveUpdate(data);
     }
 }
 
 function handleLiveHeikinAshiData(data) {
-    if (!state.mainSeries) return;
-
-    if (Array.isArray(data) && data.length > 0) { // Handle HA backfill
+    if (Array.isArray(data)) { // Handle HA backfill
+        if (data.length === 0) return;
         const chartData = data.map(c => ({ time: c.unix_timestamp, open: c.open, high: c.high, low: c.low, close: c.close }));
         const volumeData = data.map(c => ({ time: c.unix_timestamp, value: c.volume || 0, color: c.close >= c.open ? elements.volUpColorInput.value + '80' : elements.volDownColorInput.value + '80' }));
         
@@ -57,16 +85,8 @@ function handleLiveHeikinAshiData(data) {
             const dataSize = chartData.length;
             state.mainChart.timeScale().setVisibleLogicalRange({ from: Math.max(0, dataSize - 100), to: dataSize - 1 });
         }
-        
-    } else if (data.current_bar) { // Handle live HA update
-        const { current_bar } = data;
-        const chartFormattedBar = { time: current_bar.unix_timestamp, open: current_bar.open, high: current_bar.high, low: current_bar.low, close: current_bar.close };
-        state.mainSeries.update(chartFormattedBar);
-        if (state.volumeSeries) {
-            const volumeData = { time: current_bar.unix_timestamp, value: current_bar.volume || 0, color: current_bar.close >= current_bar.open ? elements.volUpColorInput.value + '80' : elements.volDownColorInput.value + '80' };
-            state.volumeSeries.update(volumeData);
-        }
-        autoScrollView();
+    } else { // Handle live HA update
+       handleLiveUpdate(data);
     }
 }
 

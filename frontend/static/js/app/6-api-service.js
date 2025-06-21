@@ -166,8 +166,8 @@ export async function loadChartData() {
         // Fetch initial data based on type
         if (isTickChart) {
             // For ticks, we use the new endpoint structure.
-            const url = getTickDataUrl(...args); // You will need to create this simple helper
-            responseData = await fetchHistoricalData(url); // Re-use the fetch helper
+            const url = getTickDataUrl(...args); 
+            responseData = await fetchHistoricalData(url);
         } else if (state.candleType === 'heikin_ashi') {
             responseData = await fetchHeikinAshiData(...args);
         } else {
@@ -183,17 +183,16 @@ export async function loadChartData() {
         }
 
         // Process and display the data
-        // The 'tick' case in processInitialData will handle storing the cursor
         state.processInitialData(responseData, state.candleType);
         showToast(responseData.message, 'success');
-        // Connect to live feed if applicable (Note: live tick data is not implemented in this version)
+        
+        // Connect to the appropriate live feed if the toggle is enabled
         if (isLive) {
             if (state.candleType === 'heikin_ashi') {
                 connectToLiveHeikinAshiData();
-            } else if (state.candleType === 'regular') {
+            } else if (state.candleType === 'regular' || state.candleType === 'tick') {
+                // The /ws/live endpoint now handles both regular and tick intervals
                 connectToLiveDataFeed();
-            } else {
-                showToast("Live data is not available for tick-based charts.", "info");
             }
         }
     } catch (error) {
