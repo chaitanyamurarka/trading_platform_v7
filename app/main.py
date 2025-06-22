@@ -24,14 +24,8 @@ from .middleware.rate_limiting import RateLimitMiddleware
 # Temporily Commenting this
 # from .core import strategy_loader
 # from .services.live_data_feed_service import live_feed_service
-from .routers import (
-        historical_data_router, 
-        utility_router, 
-        live_data_router, 
-        heikin_ashi_router, 
-        heikin_ashi_live_router,
-        tick_data_router
-)
+from .routers import data_router
+
 # NEW IMPORTS for connection manager
 from .websocket_manager import (
         startup_connection_manager, 
@@ -129,17 +123,6 @@ async def shutdown_event():
     logging.info("Application shutdown complete.")
 
 
-# --- API Routers (UNCHANGED) ---
-app.include_router(historical_data_router.router)
-app.include_router(utility_router.router)
-app.include_router(live_data_router.router)
-app.include_router(heikin_ashi_router.router)
-app.include_router(heikin_ashi_live_router.router)
-# NEW: Include the tick data router
-app.include_router(tick_data_router.router)
-
-
-# --- Root Endpoint (UNCHANGED) ---
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -153,6 +136,7 @@ async def root():
         logging.error(f"index.html not found at: {index_html_path}")
         raise HTTPException(status_code=404, detail="index.html not found")
 
+app.include_router(data_router.router) # Now using the single, unified router
 
 # NEW: Health check endpoint to monitor connection manager
 @app.get("/health/websocket")
