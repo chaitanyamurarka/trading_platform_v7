@@ -50,7 +50,7 @@ class LiveTickListener(iq.SilentQuoteListener):
                     utc_timestamp = int(aware_bar_datetime.timestamp())
 
                     bar_data = {
-                        "timestamp": utc_timestamp,
+                        "unix_timestamp": utc_timestamp,
                         "open": float(bar['open_p']), "high": float(bar['high_p']),
                         "low": float(bar['low_p']), "close": float(bar['close_p']),
                         "volume": int(bar['prd_vlm']),
