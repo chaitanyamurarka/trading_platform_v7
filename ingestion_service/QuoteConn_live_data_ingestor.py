@@ -89,7 +89,6 @@ class LiveTickListener(iq.SilentQuoteListener):
         cache_key = f"intraday_ticks:{symbol}"
         pipeline = self.redis_client.pipeline()
         pipeline.rpush(cache_key, json.dumps(tick_data))
-        pipeline.ltrim(cache_key, -10000, -1)  # Keep only the last 10,000 ticks
         pipeline.execute()
 
     def process_summary(self, summary_data: np.ndarray) -> None:

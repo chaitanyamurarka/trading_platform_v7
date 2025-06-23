@@ -83,12 +83,18 @@ class TickBarResampler:
             self.current_bar.low = min(self.current_bar.low, price)
             self.current_bar.close = price
             self.current_bar.volume += volume
-            self.current_bar.unix_timestamp = fake_unix_timestamp
+            # =================================================================
+            # --- FIX: The line below was incorrectly updating the timestamp of the in-progress bar ---
+            # self.current_bar.unix_timestamp = fake_unix_timestamp  <-- REMOVE THIS LINE
+            # =================================================================
             self.tick_count += 1
             
             # The bar is still in-progress, return nothing.
             return None
-        
+
+# The rest of the file remains unchanged...
+# (BarResampler class and resample_ticks_to_bars function)
+# ...
 class BarResampler:
     """
     Aggregates raw ticks into time-based OHLCV bars (e.g., 1-minute, 5-minute).
