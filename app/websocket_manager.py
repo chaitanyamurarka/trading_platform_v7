@@ -1,3 +1,4 @@
+# chaitanyamurarka/trading_platform_v7/trading_platform_v7-453e29a60b38870dc8c9a94acffec1826c839dee/app/websocket_manager.py
 import asyncio
 import json
 import logging
@@ -75,20 +76,23 @@ class ConnectionManager:
             cached_ticks_str = await self.redis_client.lrange(cache_key, 0, -1)
             
             if not cached_ticks_str:
-                logger.info(f"No backfill tick data found in Redis cache for {conn_info.symbol}.")
+                logger.warning(f"No backfill tick data found in Redis cache for {conn_info.symbol}.")
                 await websocket.send_json([]) # Send empty array to confirm connection
                 return
 
             ticks = [json.loads(t) for t in cached_ticks_str]
             if not ticks:
+                logger.warning(f"Backfill tick data for {conn_info.symbol} was empty after JSON parsing.")
+                await websocket.send_json([])
                 return
 
             # 2. Resample the raw ticks into the client's requested interval
             resampled_bars = resample_ticks_to_bars(
                 ticks, conn_info.interval, conn_info.timezone
             )
-            if not resampled_bars:
-                return
+            
+            # Note: resample_ticks_to_bars can return an empty list if not enough ticks exist to form a bar.
+            # This is expected behavior.
 
             final_bars = resampled_bars
             # 3. If Heikin Ashi is requested, convert the resampled bars
@@ -100,38 +104,52 @@ class ConnectionManager:
                 payload = [bar.model_dump() for bar in final_bars]
                 await websocket.send_json(payload)
                 logger.info(f"Sent {len(payload)} backfilled bars to client for {conn_info.symbol}/{conn_info.interval}")
+            else:
+                logger.info(f"No bars to send for backfill for {conn_info.symbol}/{conn_info.interval}, sending empty list.")
+                await websocket.send_json([])
+
 
         except Exception as e:
             logger.error(f"Error sending backfill data for {conn_info.symbol}: {e}", exc_info=True)
 
 
     async def add_connection(self, websocket: WebSocket, symbol: str, interval: str, timezone: str, data_type: schemas.DataType):
-        """Adds a new WebSocket connection, sends backfill data, and sets up live processing."""
+        """
+        Adds a new WebSocket connection, sends backfill data, and sets up live processing.
+        --- MODIFIED: Starts the live listener before sending backfill to prevent race conditions. ---
+        """
         conn_info = ConnectionInfo(websocket, symbol, interval, timezone, data_type)
         self.connections[websocket] = conn_info
         
         channel_key = self._get_channel_key(symbol)
+        
+        # --- FIX: Ensure subscription group and listener are running BEFORE backfill ---
         if channel_key not in self.subscription_groups:
+            # Create a new group if it's the first connection for this symbol
             group = SubscriptionGroup(channel=channel_key, symbol=symbol)
             self.subscription_groups[channel_key] = group
+            # Start the persistent Redis listener task for this new group
             await self._start_redis_subscription(group)
-
+        
         group = self.subscription_groups[channel_key]
         group.connections.add(websocket)
         
         resampler_key = (interval, timezone)
+        
+        # Create a new resampler for this specific interval/timezone if it doesn't exist
         if resampler_key not in group.resamplers:
-            # --- MODIFICATION START: Pass timezone to TickBarResampler ---
             resampler = TickBarResampler(interval, timezone) if 'tick' in interval else BarResampler(interval, timezone)
-            # --- MODIFICATION END ---
             group.resamplers[resampler_key] = resampler
             logger.info(f"Created new {type(resampler).__name__} for group {symbol}, key: {resampler_key}")
 
+        # Create a Heikin Ashi calculator if requested and not already present
         if data_type == schemas.DataType.HEIKIN_ASHI and resampler_key not in group.heikin_ashi_calculators:
             group.heikin_ashi_calculators[resampler_key] = HeikinAshiLiveCalculator()
             logger.info(f"Created new HeikinAshiLiveCalculator for group {symbol}, key: {resampler_key}")
             
+        # Now that all live listeners and resamplers are confirmed to be in place, send historical data.
         await self._send_backfill_data(websocket, conn_info)
+        # --- END FIX ---
 
 
     async def remove_connection(self, websocket: WebSocket):
@@ -146,17 +164,31 @@ class ConnectionManager:
         pubsub = self.redis_client.pubsub()
         await pubsub.subscribe(group.channel)
         group.redis_subscription = pubsub
-        group.message_task = asyncio.create_task(self._handle_redis_messages(group))
+        # --- MODIFIED: Pass the pubsub object directly to the handler ---
+        group.message_task = asyncio.create_task(self._handle_redis_messages(group, pubsub))
+        logger.info(f"Redis subscription task created for channel: {group.channel}")
 
-    async def _handle_redis_messages(self, group: SubscriptionGroup):
-        """Listens for raw ticks and dispatches them for processing."""
+    async def _handle_redis_messages(self, group: SubscriptionGroup, pubsub: aioredis.client.PubSub):
+        """
+        Listens for raw ticks and dispatches them for processing.
+        --- MODIFIED: Added crucial logging for diagnostics. ---
+        """
+        logger.info(f"STARTING Redis message listener for channel: {group.channel}")
         try:
-            async for message in group.redis_subscription.listen():
+            async for message in pubsub.listen():
+                # This log is essential to confirm Redis messages are being received at all
+                logger.debug(f"Received raw message from Redis on channel {group.channel}: {message}")
                 if message['type'] == 'message':
                     tick_data = json.loads(message['data'])
                     await self._process_tick_for_group(group, tick_data)
+        except asyncio.CancelledError:
+             logger.warning(f"Redis message listener for {group.channel} was cancelled.")
         except Exception as e:
-            logger.error(f"Redis message handler error for {group.channel}: {e}")
+            # This will catch errors during connection or message processing
+            logger.error(f"FATAL: Redis message listener for {group.channel} failed: {e}", exc_info=True)
+        finally:
+            # This log will show if the listener loop ever exits for any reason
+            logger.warning(f"STOPPED Redis message listener for channel: {group.channel}")
 
     async def _process_tick_for_group(self, group: SubscriptionGroup, tick_data: dict):
         """Processes a single raw tick, generates all required data types, and sends them to the correct clients."""
@@ -165,32 +197,38 @@ class ConnectionManager:
         payloads: Dict[tuple, dict] = {}
 
         for resampler_key, resampler in group.resamplers.items():
-            completed_bar = resampler.add_bar(tick_data)
-            current_bar = resampler.current_bar
-            
-            payloads[(schemas.DataType.REGULAR, *resampler_key)] = {
-                "completed_bar": completed_bar.model_dump() if completed_bar else None,
-                "current_bar": current_bar.model_dump() if current_bar else None
-            }
-
-            if resampler_key in group.heikin_ashi_calculators:
-                ha_calc = group.heikin_ashi_calculators[resampler_key]
-                completed_ha_bar, current_ha_bar = None, None
+            try:
+                completed_bar = resampler.add_bar(tick_data)
+                current_bar = resampler.current_bar
                 
-                if completed_bar:
-                    ha_live_calc = group.heikin_ashi_calculators.get(resampler_key)
-                    if ha_live_calc:
-                         completed_ha_bar = ha_live_calc.calculate_next_completed(completed_bar)
-
-                if current_bar:
-                    ha_live_calc = group.heikin_ashi_calculators.get(resampler_key)
-                    if ha_live_calc:
-                        current_ha_bar = ha_live_calc.calculate_current_bar(current_bar)
-                
-                payloads[(schemas.DataType.HEIKIN_ASHI, *resampler_key)] = {
-                    "completed_bar": completed_ha_bar.model_dump() if completed_ha_bar else None,
-                    "current_bar": current_ha_bar.model_dump() if current_ha_bar else None
+                payloads[(schemas.DataType.REGULAR, *resampler_key)] = {
+                    "completed_bar": completed_bar.model_dump() if completed_bar else None,
+                    "current_bar": current_bar.model_dump() if current_bar else None
                 }
+
+                if resampler_key in group.heikin_ashi_calculators:
+                    ha_calc = group.heikin_ashi_calculators[resampler_key]
+                    completed_ha_bar, current_ha_bar = None, None
+                    
+                    if completed_bar:
+                        ha_live_calc = group.heikin_ashi_calculators.get(resampler_key)
+                        if ha_live_calc:
+                             completed_ha_bar = ha_live_calc.calculate_next_completed(completed_bar)
+
+                    if current_bar:
+                        ha_live_calc = group.heikin_ashi_calculators.get(resampler_key)
+                        if ha_live_calc:
+                            current_ha_bar = ha_live_calc.calculate_current_bar(current_bar)
+                    
+                    payloads[(schemas.DataType.HEIKIN_ASHI, *resampler_key)] = {
+                        "completed_bar": completed_ha_bar.model_dump() if completed_ha_bar else None,
+                        "current_bar": current_ha_bar.model_dump() if current_ha_bar else None
+                    }
+            except Exception as e:
+                logger.error(f"Error processing tick in resampler {resampler_key}: {e}", exc_info=True)
+                # Continue to next resampler
+                continue
+
 
         tasks = []
         for websocket in list(group.connections):

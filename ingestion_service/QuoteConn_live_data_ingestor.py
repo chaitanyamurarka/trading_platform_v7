@@ -75,7 +75,7 @@ class LiveTickListener(iq.SilentQuoteListener):
         utc_timestamp = datetime.now(timezone.utc).timestamp()
         
         tick_data = {
-            "symbol": symbol,
+            # "symbol": symbol,
             "price": price,
             "volume": volume,
             "timestamp": utc_timestamp
