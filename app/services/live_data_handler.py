@@ -158,70 +158,53 @@ class BarResampler:
             
         return None
 
-class HeikinAshiLiveCalculator:
+# NEW FUNCTION: Add this to the end of the file
+def resample_bars_from_bars(
+    one_sec_bars: List[schemas.Candle],
+    target_interval_str: str,
+    target_timezone_str: str
+) -> List[schemas.Candle]:
     """
-    Calculates live Heikin Ashi candles one at a time by maintaining state of the previous HA candle.
-    This allows for real-time calculation without needing a full historical dataset.
+    Resamples a list of 1-second OHLC bars into a new, larger time interval.
+
+    Args:
+        one_sec_bars: A list of 1-second candle objects, sorted chronologically.
+        target_interval_str: The desired output interval (e.g., "5m", "1h").
+        target_timezone_str: The IANA timezone for alignment.
+
+    Returns:
+        A new list of resampled OHLC candle objects.
     """
-    def __init__(self):
-        """Initializes the calculator with no prior state."""
-        self.prev_ha_open: Optional[float] = None
-        self.prev_ha_close: Optional[float] = None
+    if not one_sec_bars:
+        return []
 
-    def _calculate_candle(self, regular_candle: schemas.Candle) -> schemas.HeikinAshiCandle:
-        """
-        Performs the core Heikin Ashi calculation for a single candle.
-        
-        Args:
-            regular_candle (schemas.Candle): The regular OHLC candle (can be completed or in-progress).
-            
-        Returns:
-            schemas.HeikinAshiCandle: The corresponding Heikin Ashi candle.
-        """
-        # HA Close is the average of the regular bar's components
-        ha_close = (regular_candle.open + regular_candle.high + regular_candle.low + regular_candle.close) / 4
-        
-        if self.prev_ha_open is None or self.prev_ha_close is None:
-            # --- First candle (bootstrap): HA Open is the average of the regular open and close ---
-            ha_open = (regular_candle.open + regular_candle.close) / 2
-        else:
-            # --- Subsequent candles: HA Open is the average of the previous HA Open and HA Close ---
-            ha_open = (self.prev_ha_open + self.prev_ha_close) / 2
-            
-        ha_high = max(regular_candle.high, ha_open, ha_close)
-        ha_low = min(regular_candle.low, ha_open, ha_close)
+    # This method is not suitable for creating tick-based bars from time-based bars.
+    if 'tick' in target_interval_str:
+        logger.warning(f"Cannot resample 1s bars into tick-based interval '{target_interval_str}'.")
+        return []
 
-        return schemas.HeikinAshiCandle(
-            open=ha_open, high=ha_high, low=ha_low, close=ha_close,
-            volume=regular_candle.volume, unix_timestamp=regular_candle.unix_timestamp,
-            regular_open=regular_candle.open, regular_close=regular_candle.close
-        )
+    logger.info(f"Resampling {len(one_sec_bars)} 1-second bars into {target_interval_str} bars.")
 
-    def calculate_next_completed(self, completed_regular_candle: schemas.Candle) -> schemas.HeikinAshiCandle:
-        """
-        Calculates a completed Heikin Ashi candle and updates the internal state for the next calculation.
-        
-        Args:
-            completed_regular_candle (schemas.Candle): The fully formed regular OHLC candle.
-            
-        Returns:
-            schemas.HeikinAshiCandle: The completed Heikin Ashi candle.
-        """
-        ha_candle = self._calculate_candle(completed_regular_candle)
-        # --- Set state for the *next* candle calculation ---
-        self.prev_ha_open = ha_candle.open
-        self.prev_ha_close = ha_candle.close
-        return ha_candle
+    # Use a temporary resampler instance for this one-off task.
+    resampler = BarResampler(interval_str=target_interval_str, timezone_str=target_timezone_str)
+    completed_bars: List[schemas.Candle] = []
 
-    def calculate_current_bar(self, in_progress_regular_candle: schemas.Candle) -> schemas.HeikinAshiCandle:
-        """
-        Calculates the current, in-progress Heikin Ashi candle without updating state.
-        This is used to show the "live" HA candle as it forms.
+    for bar in one_sec_bars:
+        # To resample, we can treat each 1-second bar as if it were a single "tick".
+        # The BarResampler will then correctly bucket these based on their timestamps.
+        tick_like_data = {
+            "price": bar.close,
+            "volume": bar.volume,
+            "timestamp": bar.unix_timestamp # The resampler works with UNIX timestamps
+        }
+        completed_bar = resampler.add_bar(tick_like_data)
+        if completed_bar:
+            completed_bars.append(completed_bar)
+
+    # After the loop, the resampler might have a final, in-progress bar.
+    # For backfilling, we consider this bar "complete" for the data we have.
+    if resampler.current_bar:
+        completed_bars.append(resampler.current_bar)
         
-        Args:
-            in_progress_regular_candle (schemas.Candle): The partially formed regular OHLC candle.
-        
-        Returns:
-            schemas.HeikinAshiCandle: The in-progress Heikin Ashi candle.
-        """
-        return self._calculate_candle(in_progress_regular_candle)
+    logger.info(f"Resampling complete. Produced {len(completed_bars)} bars.")
+    return completed_bars

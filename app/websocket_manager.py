@@ -10,7 +10,10 @@ from websockets.exceptions import ConnectionClosed
 
 from .config import settings
 from . import schemas
-from .services.live_data_handler import BarResampler, TickBarResampler, HeikinAshiLiveCalculator
+# MODIFIED: Import new functions
+from .services.live_data_handler import BarResampler, TickBarResampler, resample_bars_from_bars
+from .services.heikin_ashi_calculator import HeikinAshiLiveCalculator, calculate_historical_heikin_ashi
+
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +67,48 @@ class ConnectionManager:
     def _get_channel_key(self, symbol: str) -> str:
         return f"live_ticks:{symbol}"
 
+    # NEW METHOD: Handles sending backfill data
+    async def _send_backfill_data(self, websocket: WebSocket, conn_info: ConnectionInfo):
+        """Sends a backfill of recent data from cache to a new client."""
+        logger.info(f"Attempting backfill for {conn_info.symbol}/{conn_info.interval} ({conn_info.data_type.value})")
+        try:
+            # 1. Fetch 1-second bars from the Redis cache populated by the ingestor
+            cache_key = f"intraday_bars:{conn_info.symbol}"
+            cached_bars_str = await self.redis_client.lrange(cache_key, 0, -1)
+            
+            if not cached_bars_str:
+                logger.info(f"No backfill data found in Redis cache for {conn_info.symbol}.")
+                await websocket.send_json([]) # Send empty array to confirm connection
+                return
+
+            one_sec_bars = [schemas.Candle(**json.loads(b)) for b in cached_bars_str]
+            if not one_sec_bars:
+                return
+
+            # 2. Resample the 1-second bars into the client's requested interval
+            resampled_bars = resample_bars_from_bars(
+                one_sec_bars, conn_info.interval, conn_info.timezone
+            )
+            if not resampled_bars:
+                return
+
+            final_bars = resampled_bars
+            # 3. If Heikin Ashi is requested, convert the resampled bars
+            if conn_info.data_type == schemas.DataType.HEIKIN_ASHI:
+                final_bars = calculate_historical_heikin_ashi(resampled_bars)
+
+            # 4. Send the final list of bars to the client
+            if final_bars:
+                payload = [bar.model_dump() for bar in final_bars]
+                await websocket.send_json(payload)
+                logger.info(f"Sent {len(payload)} backfilled bars to client for {conn_info.symbol}/{conn_info.interval}")
+
+        except Exception as e:
+            logger.error(f"Error sending backfill data for {conn_info.symbol}: {e}", exc_info=True)
+
+
     async def add_connection(self, websocket: WebSocket, symbol: str, interval: str, timezone: str, data_type: schemas.DataType):
-        """Adds a new WebSocket connection, creating necessary resamplers and calculators."""
+        """Adds a new WebSocket connection, sends backfill data, and sets up live processing."""
         conn_info = ConnectionInfo(websocket, symbol, interval, timezone, data_type)
         self.connections[websocket] = conn_info
         
@@ -84,11 +127,13 @@ class ConnectionManager:
             group.resamplers[resampler_key] = resampler
             logger.info(f"Created new {type(resampler).__name__} for group {symbol}, key: {resampler_key}")
 
-        # NEW: Create a Heikin Ashi calculator if requested and not present
         if data_type == schemas.DataType.HEIKIN_ASHI and resampler_key not in group.heikin_ashi_calculators:
-            # Note: HA calculator does not need historical data for live calculation, it bootstraps itself.
             group.heikin_ashi_calculators[resampler_key] = HeikinAshiLiveCalculator()
             logger.info(f"Created new HeikinAshiLiveCalculator for group {symbol}, key: {resampler_key}")
+            
+        # --- MODIFICATION: Call the backfill logic for the new connection ---
+        await self._send_backfill_data(websocket, conn_info)
+
 
     async def remove_connection(self, websocket: WebSocket):
         if websocket not in self.connections: return
@@ -137,9 +182,16 @@ class ConnectionManager:
                 completed_ha_bar, current_ha_bar = None, None
                 
                 if completed_bar:
-                    completed_ha_bar = ha_calc.calculate_next_completed(completed_bar)
+                    # Note: We need to use the stateful calculator here for live data
+                    # The historical calculator is only for the backfill
+                    ha_live_calc = group.heikin_ashi_calculators.get(resampler_key)
+                    if ha_live_calc:
+                         completed_ha_bar = ha_live_calc.calculate_next_completed(completed_bar)
+
                 if current_bar:
-                    current_ha_bar = ha_calc.calculate_current_bar(current_bar)
+                    ha_live_calc = group.heikin_ashi_calculators.get(resampler_key)
+                    if ha_live_calc:
+                        current_ha_bar = ha_live_calc.calculate_current_bar(current_bar)
                 
                 payloads[(schemas.DataType.HEIKIN_ASHI, *resampler_key)] = {
                     "completed_bar": completed_ha_bar.model_dump() if completed_ha_bar else None,
