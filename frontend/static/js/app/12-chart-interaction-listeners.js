@@ -1,7 +1,9 @@
 // frontend/static/js/app/12-chart-interaction-listeners.js
 import { state } from './2-state.js';
 import * as elements from './1-dom-elements.js';
-import { fetchAndPrependHeikinAshiChunk, fetchAndPrependTickChunk } from './6-api-service.js';
+import { fetchAndPrependHeikinAshiChunk, 
+    fetchAndPrependTickChunk, 
+    fetchAndPrependRegularCandleChunk } from './6-api-service.js';
 
 function formatPrice(price, decimals = 2) {
     if (price === null || price === undefined) return 'N/A';
@@ -105,12 +107,11 @@ export function setupChartInfiniteScroll() {
             if (state.candleType === 'heikin_ashi') {
                 if (!state.allHeikinAshiDataLoaded) fetchAndPrependHeikinAshiChunk();
             } else if (state.candleType === 'tick') {
-                // Call our new tick-specific chunk loader
                 if (!state.allTickDataLoaded) fetchAndPrependTickChunk();
             } else {
-                // Existing logic for regular time-based candles
+                // CORRECTED: Call the new function for regular candles
                 if (!state.allDataLoaded) {
-                    // You might need to re-import and call fetchAndPrependRegularCandleChunk here
+                    fetchAndPrependRegularCandleChunk();
                 }
             }
         }

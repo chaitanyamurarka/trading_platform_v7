@@ -42,6 +42,116 @@ async function fetchHistoricalData(url) {
     return response.json();
 }
 
+export async function fetchAndPrependRegularCandleChunk() {
+    if (state.allDataLoaded || state.currentlyFetching || !state.chartRequestId) {
+        return;
+    }
+
+    const nextOffset = Math.max(0, state.chartCurrentOffset - constants.DATA_CHUNK_SIZE);
+
+    if (nextOffset === state.chartCurrentOffset && state.chartCurrentOffset === 0) {
+        state.allDataLoaded = true;
+        return;
+    }
+
+    const limit = state.chartCurrentOffset - nextOffset;
+
+    if (limit <= 0) {
+        state.allDataLoaded = true;
+        return;
+    }
+
+    state.currentlyFetching = true;
+    elements.loadingIndicator.style.display = 'flex';
+
+    try {
+        const chunkUrl = getHistoricalDataChunkUrl(state.chartRequestId, nextOffset, limit);
+        const chunkData = await fetchHistoricalData(chunkUrl);
+
+        if (chunkData && chunkData.candles.length > 0) {
+            const chartFormattedData = chunkData.candles.map(c => ({ time: c.unix_timestamp, open: c.open, high: c.high, low: c.low, close: c.close }));
+            const volumeFormattedData = chunkData.candles.map(c => ({ time: c.unix_timestamp, value: c.volume, color: c.close >= c.open ? elements.volUpColorInput.value + '80' : elements.volDownColorInput.value + '80' }));
+
+            state.allChartData = [...chartFormattedData, ...state.allChartData];
+            state.allVolumeData = [...volumeFormattedData, ...state.allVolumeData];
+
+            state.mainSeries.setData(state.allChartData);
+            state.volumeSeries.setData(state.allVolumeData);
+
+            state.chartCurrentOffset = chunkData.offset;
+
+            if (state.chartCurrentOffset === 0) {
+                state.allDataLoaded = true;
+                showToast('Loaded all available historical data.', 'info');
+            } else {
+                showToast(`Loaded ${chunkData.candles.length} older candles`, 'success');
+            }
+        } else {
+            state.allDataLoaded = true;
+        }
+    } catch (error) {
+        console.error("Failed to prepend regular data chunk:", error);
+        showToast("Could not load older historical data.", 'error');
+    } finally {
+        elements.loadingIndicator.style.display = 'none';
+        state.currentlyFetching = false;
+    }
+}
+
+
+export async function fetchAndPrependHeikinAshiChunk() {
+    // CORRECTED LOGIC
+    if (state.allHeikinAshiDataLoaded || state.currentlyFetching || !state.heikinAshiRequestId) {
+        return;
+    }
+
+    const nextOffset = Math.max(0, state.heikinAshiCurrentOffset - constants.DATA_CHUNK_SIZE);
+    
+    if (nextOffset === state.heikinAshiCurrentOffset && state.heikinAshiCurrentOffset === 0) {
+        state.allHeikinAshiDataLoaded = true;
+        return;
+    }
+    
+    const limit = state.heikinAshiCurrentOffset - nextOffset;
+
+    if (limit <= 0) {
+        state.allHeikinAshiDataLoaded = true;
+        return;
+    }
+
+    state.currentlyFetching = true;
+    elements.loadingIndicator.style.display = 'flex';
+
+    try {
+        const chunkData = await fetchHeikinAshiChunk(state.heikinAshiRequestId, nextOffset, limit);
+        if (chunkData && chunkData.candles.length > 0) {
+            const chartFormattedData = chunkData.candles.map(c => ({ time: c.unix_timestamp, open: c.open, high: c.high, low: c.low, close: c.close }));
+            const volumeFormattedData = chunkData.candles.map(c => ({ time: c.unix_timestamp, value: c.volume || 0, color: c.close >= c.open ? elements.volUpColorInput.value + '80' : elements.volDownColorInput.value + '80' }));
+
+            state.allHeikinAshiData = [...chartFormattedData, ...state.allHeikinAshiData];
+            state.allHeikinAshiVolumeData = [...volumeFormattedData, ...state.allHeikinAshiVolumeData];
+            state.mainSeries.setData(state.allHeikinAshiData);
+            state.volumeSeries.setData(state.allHeikinAshiVolumeData);
+            state.heikinAshiCurrentOffset = chunkData.offset;
+
+            if (state.heikinAshiCurrentOffset === 0) {
+                state.allHeikinAshiDataLoaded = true;
+                showToast('Loaded all available Heikin Ashi data.', 'info');
+            } else {
+                showToast(`Loaded ${chunkData.candles.length} older Heikin Ashi candles`, 'success');
+            }
+        } else {
+            state.allHeikinAshiDataLoaded = true;
+        }
+    } catch (error) {
+        console.error("Failed to prepend Heikin Ashi data chunk:", error);
+        showToast("Could not load older Heikin Ashi data.", 'error');
+    } finally {
+        elements.loadingIndicator.style.display = 'none';
+        state.currentlyFetching = false;
+    }
+}
+
 async function fetchTickDataChunk(cursor) {
     // The new endpoint doesn't need offset, just the cursor which is stored in request_id
     const url = `/tick/chunk?request_id=${encodeURIComponent(cursor)}&limit=${constants.DATA_CHUNK_SIZE}`;
@@ -93,44 +203,6 @@ export async function fetchAndPrependTickChunk() {
     } catch (error) {
         console.error("Failed to prepend tick data chunk:", error);
         showToast("Could not load older tick data.", 'error');
-    } finally {
-        elements.loadingIndicator.style.display = 'none';
-        state.currentlyFetching = false;
-    }
-}
-
-export async function fetchAndPrependHeikinAshiChunk() {
-    const nextOffset = state.heikinAshiCurrentOffset - constants.DATA_CHUNK_SIZE;
-    if (nextOffset < 0) {
-        state.allHeikinAshiDataLoaded = true;
-        return;
-    }
-
-    state.currentlyFetching = true;
-    elements.loadingIndicator.style.display = 'flex';
-
-    try {
-        const chunkData = await fetchHeikinAshiChunk(state.heikinAshiRequestId, nextOffset, constants.DATA_CHUNK_SIZE);
-        if (chunkData && chunkData.candles.length > 0) {
-            const chartFormattedData = chunkData.candles.map(c => ({ time: c.unix_timestamp, open: c.open, high: c.high, low: c.low, close: c.close }));
-            const volumeFormattedData = chunkData.candles.map(c => ({ time: c.unix_timestamp, value: c.volume || 0, color: c.close >= c.open ? elements.volUpColorInput.value + '80' : elements.volDownColorInput.value + '80' }));
-
-            state.allHeikinAshiData = [...chartFormattedData, ...state.allHeikinAshiData];
-            state.allHeikinAshiVolumeData = [...volumeFormattedData, ...state.allHeikinAshiVolumeData];
-            state.mainSeries.setData(state.allHeikinAshiData);
-            state.volumeSeries.setData(state.allHeikinAshiVolumeData);
-            state.heikinAshiCurrentOffset = chunkData.offset;
-
-            if (state.heikinAshiCurrentOffset === 0) {
-                state.allHeikinAshiDataLoaded = true;
-            }
-            showToast(`Loaded ${chunkData.candles.length} older Heikin Ashi candles`, 'success');
-        } else {
-            state.allHeikinAshiDataLoaded = true;
-        }
-    } catch (error) {
-        console.error("Failed to prepend Heikin Ashi data chunk:", error);
-        showToast("Could not load older Heikin Ashi data.", 'error');
     } finally {
         elements.loadingIndicator.style.display = 'none';
         state.currentlyFetching = false;
