@@ -85,6 +85,17 @@ class LiveTickListener(iq.SilentQuoteListener):
         channel = f"live_ticks:{symbol}"
         self.redis_client.publish(channel, json.dumps(tick_data))
 
+        # Store to the new 'intraday_bars' cache
+        cache_key = f"intraday_bars:{symbol}"
+
+        bar_data = {
+            "unix_timestamp": utc_timestamp,
+            "open": price, "high": price,
+            "low": price, "close": price,
+            "volume":volume,
+        }
+        self.redis_client.rpush(cache_key, json.dumps(bar_data))
+        self.redis_client.expire(cache_key, 86400)
 
     def process_summary(self, summary_data: np.ndarray) -> None:
         """Handles summary messages, treating them as ticks."""

@@ -33,6 +33,9 @@ export function setupDrawingToolbarListeners() {
         }
         // --- END NEW LOGIC ---
 
+        // --- FIX: This line forces the chart to scroll to the latest bar ---
+        state.mainChart?.timeScale().scrollToRealTime();
+
         autoScaleBtn.classList.add('btn-active');
         linearScaleBtn.classList.remove('btn-active');
     });
