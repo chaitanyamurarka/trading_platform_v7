@@ -1,54 +1,22 @@
-import { createChart } from '/dist/lightweight-charts.esm.js';
-import { state } from './2-state.js';
-import * as elements from './1-dom-elements.js';
+// frontend/static/js/app/3-chart-options.js
 
-/**
- * Creates the main chart object, adds the primary series, and stores them in the state.
- * This is the central function for initializing the chart view.
- */
-export function initializeNewChartObject() {
-    const theme = localStorage.getItem('chartTheme') || 'light';
-    const options = chartOptions(theme);
-    
-    state.chart = createChart(elements.chartContainer, options);
-    
-    state.mainSeries = state.chart.addCandlestickSeries(getSeriesOptions());
-    state.volumeSeries = state.chart.addHistogramSeries({
-        priceFormat: {
-            type: 'volume',
-        },
-        priceScaleId: '', // Set to an empty string to display the volume series on its own scale
-    });
-    
-    // Assign the volume series to the main price scale initially
-    state.chart.priceScale('').applyOptions({
-        scaleMargins: {
-            top: 0.8, // 80% of the chart height for the main series
-            bottom: 0,
-        },
-    });
-    
-    state.volumeSeries.priceScale().applyOptions({
-        scaleMargins: {
-            top: 0,
-            bottom: 0.2, // 20% of the chart height for the volume series
-        }
-    });
-}
+import * as elements from './1-dom-elements.js';
 
 /**
  * Generates the main options object for creating the chart.
  * @param {string} theme - The current theme ('light' or 'dark').
  * @returns {object} The chart options for the Lightweight Charts library.
  */
+// frontend/static/js/app/3-chart-options.js
+
 export const chartOptions = (theme) => {
     const isDark = theme === 'dark';
-    const gridColor = isDark ? '#2a323c' : '#e5e7eb';
-    const textColor = isDark ? '#a6adba' : '#1f2937';
+    const gridColor = isDark ? '#333' : '#e0e0e0';
+    const textColor = isDark ? '#fff' : '#333';
 
     return {
         layout: {
-            background: { color: isDark ? '#1d232a' : '#ffffff' },
+            background: { color: isDark ? '#1a1a1a' : '#ffffff' },
             textColor: textColor,
         },
         grid: {
@@ -56,7 +24,7 @@ export const chartOptions = (theme) => {
             horzLines: { color: gridColor },
         },
         crosshair: {
-            mode: 1, // LightweightCharts.CrosshairMode.Normal
+            mode: LightweightCharts.CrosshairMode.Normal,
         },
         rightPriceScale: {
             borderColor: gridColor,
@@ -65,12 +33,18 @@ export const chartOptions = (theme) => {
             timeVisible: true,
             secondsVisible: true,
             borderColor: gridColor,
+            
+            // =================================================================
+            // --- NEW FIX: Prevent the chart from automatically shifting ---
+            // This ensures that the initial data, including after-hours bars,
+            // remains in view after being loaded.
+            // =================================================================
             shiftVisibleRangeOnNewBar: false,
         },
         watermark: {
             color: 'rgba(150, 150, 150, 0.2)',
             visible: true,
-            text: 'EigenKor Trading',
+            text: 'My Trading Platform',
             fontSize: 48,
             horzAlign: 'center',
             vertAlign: 'center',
@@ -79,7 +53,7 @@ export const chartOptions = (theme) => {
 };
 
 /**
- * Generates the options for the main candlestick/bar series based on UI settings.
+ * Generates the options for the main candlestick/bar series.
  * @returns {object} The series options.
  */
 export function getSeriesOptions() {
@@ -93,6 +67,7 @@ export function getSeriesOptions() {
     };
 
     if (disableWicks) {
+        // Use transparent colors to completely hide wicks
         baseOptions.wickUpColor = 'rgba(0,0,0,0)';
         baseOptions.wickDownColor = 'rgba(0,0,0,0)';
     } else {
@@ -101,4 +76,18 @@ export function getSeriesOptions() {
     }
 
     return baseOptions;
+}
+
+export function getChartTheme(theme) {
+    const isDarkMode = theme === 'dark'; //
+    return {
+        layout: { background: { type: 'solid', color: isDarkMode ? '#1d232a' : '#ffffff' }, textColor: isDarkMode ? '#a6adba' : '#1f2937' }, //
+        grid: { vertLines: { color: isDarkMode ? '#2a323c' : '#e5e7eb' }, horzLines: { color: isDarkMode ? '#2a323c' : '#e5e7eb' } }, //
+        // --- ADD THIS
+        timeScale: {
+            timeVisible: true, //
+            secondsVisible: true, // You can set this to true if you need seconds precision
+        }
+        // ---
+    };
 }

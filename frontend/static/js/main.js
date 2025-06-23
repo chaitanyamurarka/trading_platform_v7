@@ -1,12 +1,29 @@
-import { initializeNewChartObject } from './app/3-chart-options.js';
-import { initializeAllEventListeners } from './app/11-ui-listeners.js';
-import { setAutomaticDateTime, updateThemeToggleIcon } from './app/4-ui-helpers.js';
-import { startApplication } from './app/6-api-service.js'; 
+// frontend/static/js/main.js
+import { state } from './app/2-state.js';
+import * as elements from './app/1-dom-elements.js';
+import { getChartTheme } from './app/3-chart-options.js';
+import { syncSettingsInputs, updateThemeToggleIcon, setAutomaticDateTime } from './app/4-ui-helpers.js';
+import { recreateMainSeries } from './app/5-chart-drawing.js';
+import { startSession } from './app/10-session-manager.js';
+import { initializeAllEventListeners } from './app/7-event-listeners.js';
+import { responsiveHandler } from './app/8-responsive-handler.js';
 
-/**
- * Main application entry point.
- * This event listener fires when the DOM is fully loaded.
- */
+function initializeNewChartObject() {
+    if (state.mainChart) state.mainChart.remove();
+    
+    state.mainChart = LightweightCharts.createChart(elements.chartContainer, getChartTheme(localStorage.getItem('chartTheme') || 'light'));
+    state.mainSeries = null;
+    state.volumeSeries = null;
+    
+    setTimeout(() => responsiveHandler.forceResize(), 100);
+    
+    syncSettingsInputs();
+    recreateMainSeries(elements.chartTypeSelect.value);
+    
+    state.volumeSeries = state.mainChart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: '' });
+    state.mainChart.priceScale('').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     // Basic UI setup
     const savedTheme = localStorage.getItem('chartTheme') || 'light';
@@ -14,11 +31,12 @@ document.addEventListener('DOMContentLoaded', () => {
     updateThemeToggleIcon();
     setAutomaticDateTime();
 
-    // Initialize the chart objects and all UI event listeners
+    // Initialize the chart object
     initializeNewChartObject();
+
+    // Setup all event listeners from the new modules
     initializeAllEventListeners();
     
-    // --- Start the application ---
-    // This single function now handles getting the session and loading the initial data.
-    startApplication(); 
+    // Start the session, which will trigger the initial data load
+    startSession();
 });
