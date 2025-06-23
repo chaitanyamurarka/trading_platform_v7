@@ -51,11 +51,11 @@ export function applyAutoscaling() {
 
     if (!state.mainChart) return;
 
+
     // Apply autoscale to the price and time axes
     state.mainChart.priceScale().applyOptions({ autoScale: true });
     state.mainChart.timeScale().applyOptions({ rightOffset: 12 });
 
-    // --- NEW LOGIC ---
     // Set the visible range to the most recent 100 bars
     const currentData = state.getCurrentChartData();
     if (currentData && currentData.length > 0) {
@@ -65,7 +65,9 @@ export function applyAutoscaling() {
             to: dataSize - 1
         });
     }
-    // --- END NEW LOGIC ---
+
+    // Scroll to the far right of the chart to see the latest bar
+    state.mainChart.timeScale().scrollToRealTime();
 
     if(autoScaleBtn && linearScaleBtn) {
         autoScaleBtn.classList.add('btn-active');

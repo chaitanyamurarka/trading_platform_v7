@@ -8,11 +8,24 @@ let haLiveDataSocket = null;
 
 function autoScrollView() {
     const autoScaleBtn = document.getElementById('scaling-auto-btn');
-    // Check if live toggle is on AND autoscale button is active
-    if (elements.liveToggle.checked && autoScaleBtn?.classList.contains('btn-active')) {
-        state.mainChart.timeScale().scrollToRealTime();
+    // Only proceed if live mode is on and auto-scaling is active
+    if (!elements.liveToggle.checked || !autoScaleBtn?.classList.contains('btn-active')) {
+        return;
+    }
+
+    const timeScale = state.mainChart.timeScale();
+    const logicalRange = timeScale.getVisibleLogicalRange();
+    
+    if (logicalRange !== null) {
+        const barsInfo = state.mainSeries.barsInLogicalRange(logicalRange.from, logicalRange.to);
+        // If the user has scrolled away from the most recent bar, don't force scroll.
+        // We consider them "away" if there are more than a few bars to the right of their view.
+        if (barsInfo !== null && barsInfo.barsAfter < 10) {
+            timeScale.scrollToRealTime();
+        }
     }
 }
+
 
 /**
  * Generic handler for processing live bar updates from a WebSocket.
