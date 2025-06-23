@@ -158,51 +158,38 @@ class BarResampler:
             
         return None
 
-# NEW FUNCTION: Add this to the end of the file
-def resample_bars_from_bars(
-    one_sec_bars: List[schemas.Candle],
+def resample_ticks_to_bars(
+    ticks: List[Dict],
     target_interval_str: str,
     target_timezone_str: str
 ) -> List[schemas.Candle]:
     """
-    Resamples a list of 1-second OHLC bars into a new, larger time interval.
+    Resamples a list of raw tick data into OHLC bars of a specified interval.
 
     Args:
-        one_sec_bars: A list of 1-second candle objects, sorted chronologically.
-        target_interval_str: The desired output interval (e.g., "5m", "1h").
-        target_timezone_str: The IANA timezone for alignment.
+        ticks: A list of tick dictionaries, e.g., [{'price':, 'volume':, 'timestamp':}].
+        target_interval_str: The desired output interval (e.g., "5m", "100tick").
+        target_timezone_str: The IANA timezone for aligning time-based bars.
 
     Returns:
         A new list of resampled OHLC candle objects.
     """
-    if not one_sec_bars:
+    if not ticks:
         return []
 
-    # This method is not suitable for creating tick-based bars from time-based bars.
-    if 'tick' in target_interval_str:
-        logger.warning(f"Cannot resample 1s bars into tick-based interval '{target_interval_str}'.")
-        return []
+    logger.info(f"Resampling {len(ticks)} ticks into {target_interval_str} bars.")
 
-    logger.info(f"Resampling {len(one_sec_bars)} 1-second bars into {target_interval_str} bars.")
-
-    # Use a temporary resampler instance for this one-off task.
-    resampler = BarResampler(interval_str=target_interval_str, timezone_str=target_timezone_str)
+    # Instantiate the correct resampler based on the interval type.
+    is_tick_based = 'tick' in target_interval_str
+    resampler = TickBarResampler(target_interval_str) if is_tick_based else BarResampler(target_interval_str, target_timezone_str)
+    
     completed_bars: List[schemas.Candle] = []
-
-    for bar in one_sec_bars:
-        # To resample, we can treat each 1-second bar as if it were a single "tick".
-        # The BarResampler will then correctly bucket these based on their timestamps.
-        tick_like_data = {
-            "price": bar.close,
-            "volume": bar.volume,
-            "timestamp": bar.unix_timestamp # The resampler works with UNIX timestamps
-        }
-        completed_bar = resampler.add_bar(tick_like_data)
+    for tick in ticks:
+        completed_bar = resampler.add_bar(tick)
         if completed_bar:
             completed_bars.append(completed_bar)
-
-    # After the loop, the resampler might have a final, in-progress bar.
-    # For backfilling, we consider this bar "complete" for the data we have.
+            
+    # Add the final, in-progress bar if it exists.
     if resampler.current_bar:
         completed_bars.append(resampler.current_bar)
         

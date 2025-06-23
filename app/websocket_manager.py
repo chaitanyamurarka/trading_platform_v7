@@ -10,8 +10,7 @@ from websockets.exceptions import ConnectionClosed
 
 from .config import settings
 from . import schemas
-# MODIFIED: Import new functions
-from .services.live_data_handler import BarResampler, TickBarResampler, resample_bars_from_bars
+from .services.live_data_handler import BarResampler, TickBarResampler, resample_ticks_to_bars
 from .services.heikin_ashi_calculator import HeikinAshiLiveCalculator, calculate_historical_heikin_ashi
 
 
@@ -67,27 +66,26 @@ class ConnectionManager:
     def _get_channel_key(self, symbol: str) -> str:
         return f"live_ticks:{symbol}"
 
-    # NEW METHOD: Handles sending backfill data
     async def _send_backfill_data(self, websocket: WebSocket, conn_info: ConnectionInfo):
-        """Sends a backfill of recent data from cache to a new client."""
+        """Sends a backfill of recent data from cache to a new client by resampling raw ticks."""
         logger.info(f"Attempting backfill for {conn_info.symbol}/{conn_info.interval} ({conn_info.data_type.value})")
         try:
-            # 1. Fetch 1-second bars from the Redis cache populated by the ingestor
-            cache_key = f"intraday_bars:{conn_info.symbol}"
-            cached_bars_str = await self.redis_client.lrange(cache_key, 0, -1)
+            # 1. Fetch raw ticks from the Redis cache populated by the ingestor
+            cache_key = f"intraday_ticks:{conn_info.symbol}"
+            cached_ticks_str = await self.redis_client.lrange(cache_key, 0, -1)
             
-            if not cached_bars_str:
-                logger.info(f"No backfill data found in Redis cache for {conn_info.symbol}.")
+            if not cached_ticks_str:
+                logger.info(f"No backfill tick data found in Redis cache for {conn_info.symbol}.")
                 await websocket.send_json([]) # Send empty array to confirm connection
                 return
 
-            one_sec_bars = [schemas.Candle(**json.loads(b)) for b in cached_bars_str]
-            if not one_sec_bars:
+            ticks = [json.loads(t) for t in cached_ticks_str]
+            if not ticks:
                 return
 
-            # 2. Resample the 1-second bars into the client's requested interval
-            resampled_bars = resample_bars_from_bars(
-                one_sec_bars, conn_info.interval, conn_info.timezone
+            # 2. Resample the raw ticks into the client's requested interval
+            resampled_bars = resample_ticks_to_bars(
+                ticks, conn_info.interval, conn_info.timezone
             )
             if not resampled_bars:
                 return
@@ -131,7 +129,6 @@ class ConnectionManager:
             group.heikin_ashi_calculators[resampler_key] = HeikinAshiLiveCalculator()
             logger.info(f"Created new HeikinAshiLiveCalculator for group {symbol}, key: {resampler_key}")
             
-        # --- MODIFICATION: Call the backfill logic for the new connection ---
         await self._send_backfill_data(websocket, conn_info)
 
 
@@ -141,7 +138,7 @@ class ConnectionManager:
         group = self.subscription_groups.get(self._get_channel_key(conn_info.symbol))
         if group:
             group.connections.discard(websocket)
-            # Cleanup logic for unused resamplers/calculators can be added here if needed
+
 
     async def _start_redis_subscription(self, group: SubscriptionGroup):
         pubsub = self.redis_client.pubsub()
@@ -163,10 +160,8 @@ class ConnectionManager:
         """Processes a single raw tick, generates all required data types, and sends them to the correct clients."""
         if not group.connections: return
         
-        # A dictionary to hold generated payloads, keyed by (data_type, interval, timezone)
         payloads: Dict[tuple, dict] = {}
 
-        # 1. Process tick for all active resamplers in the group
         for resampler_key, resampler in group.resamplers.items():
             completed_bar = resampler.add_bar(tick_data)
             current_bar = resampler.current_bar
@@ -176,14 +171,11 @@ class ConnectionManager:
                 "current_bar": current_bar.model_dump() if current_bar else None
             }
 
-            # 2. If a Heikin Ashi calculator exists for this resampler, generate HA data
             if resampler_key in group.heikin_ashi_calculators:
                 ha_calc = group.heikin_ashi_calculators[resampler_key]
                 completed_ha_bar, current_ha_bar = None, None
                 
                 if completed_bar:
-                    # Note: We need to use the stateful calculator here for live data
-                    # The historical calculator is only for the backfill
                     ha_live_calc = group.heikin_ashi_calculators.get(resampler_key)
                     if ha_live_calc:
                          completed_ha_bar = ha_live_calc.calculate_next_completed(completed_bar)
@@ -198,7 +190,6 @@ class ConnectionManager:
                     "current_bar": current_ha_bar.model_dump() if current_ha_bar else None
                 }
 
-        # 3. Send the correct payload to each connection
         tasks = []
         for websocket in list(group.connections):
             conn_info = self.connections.get(websocket)
@@ -209,7 +200,11 @@ class ConnectionManager:
                 tasks.append(websocket.send_json(payloads[payload_key]))
         
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error(f"Error sending data to client: {result}", exc_info=False)
+
 
     async def _cleanup_loop(self):
         """Periodically cleans up subscription groups with no active connections."""
@@ -222,10 +217,8 @@ class ConnectionManager:
                 if group.redis_subscription: await group.redis_subscription.unsubscribe()
                 logger.info(f"Cleaned up unused subscription: {key}")
 
-# Global instance
 connection_manager = ConnectionManager()
 
-# Lifecycle management functions for FastAPI
 async def startup_connection_manager():
     await connection_manager.start()
 
