@@ -10,7 +10,11 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from enum import Enum
 
-# --- NO CHANGES TO EXISTING SCHEMAS ---
+class DataType(str, Enum):
+    """Enumeration for the different types of data the API can serve."""
+    REGULAR = "regular"
+    HEIKIN_ASHI = "heikin_ashi"
+    TICK = "tick"
 
 class Interval(str, Enum):
     """Enumeration of allowed timeframe intervals for OHLC data."""
