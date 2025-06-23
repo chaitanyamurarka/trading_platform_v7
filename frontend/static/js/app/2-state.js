@@ -1,171 +1,109 @@
-// frontend/static/js/app/2-state.js
-
 import * as elements from './1-dom-elements.js';
 
+/**
+ * Shared constants for the application.
+ */
 export const constants = {
     DATA_CHUNK_SIZE: 5000,
-    INITIAL_FETCH_LIMIT: 5000, // Matches backend limit
 };
 
+/**
+ * Main application state management, now fully unified.
+ */
 export const state = {
-    // Chart and Series objects
+    // Chart objects
     chart: null,
     mainSeries: null,
     volumeSeries: null,
 
     // Session and UI state
     sessionToken: null,
-    heartbeatIntervalId: null,
-    showOHLCLegend: true,
-    candleType: 'regular', // 'regular' or 'heikin_ashi' or 'tick'
-
-    // Flags
-    isLive: false,
     currentlyFetching: false,
-
-    // Time Interval
-    interval: '1m',
-
-    // Time Zone
-    timezone: 'America/New_York',
     
-    // State for Regular Candle Data
-    chartRequestId: null,
-    allChartData: [],
-    allVolumeData: [],
-    chartCurrentOffset: 0,
+    // --- Unified Data State ---
+    // The type of data currently loaded (e.g., 'regular', 'heikin_ashi', 'tick')
+    currentDataType: 'regular',
+    // The cursor for fetching the next chunk of data.
+    requestId: null,
+    // Flag indicating if all historical data for the current view has been loaded.
     allDataLoaded: false,
+    // A single array for the main series data (Candle, Bar, Line, etc.).
+    allChartData: [],
+    // A single array for the volume series data.
+    allVolumeData: [],
 
-    // State for Heikin Ashi Data
-    heikinAshiRequestId: null,
-    allHeikinAshiData: [],
-    allHeikinAshiVolumeData: [],
-    heikinAshiCurrentOffset: 0,
-    allHeikinAshiDataLoaded: false,
-
-    // NEW: State for Aggregated Tick Data
-    tickRequestId: null,
-    allTickData: [],
-    allTickVolumeData: [],
-    tickCurrentOffset: 0,
-    allTickDataLoaded: false,
-
-    // Helper method to get current chart data based on candle type
-    getCurrentChartData() {
-        // --- FIX START ---
-        // Add the 'tick' case to return the correct data array.
-        if (this.candleType === 'heikin_ashi') {
-            return this.allHeikinAshiData;
-        } else if (this.candleType === 'tick') {
-            return this.allTickData;
-        } else {
-            return this.allChartData;
-        }
-        // --- FIX END ---
-    },
-    
-    // Helper method to get current volume data based on candle type
-    getCurrentVolumeData() {
-        // --- FIX START ---
-        // Also update this helper for consistency with volume data.
-        if (this.candleType === 'heikin_ashi') {
-            return this.allHeikinAshiVolumeData;
-        } else if (this.candleType === 'tick') {
-            return this.allTickVolumeData;
-        } else {
-            return this.allVolumeData;
-        }
-        // --- FIX END ---
-    },
-    
-    // Helper method to get current request ID based on candle type
-    getCurrentRequestId() {
-        return this.candleType === 'heikin_ashi' ? this.heikinAshiRequestId : this.chartRequestId;
-    },
-    
-    // Helper method to get current offset based on candle type
-    getCurrentOffset() {
-        return this.candleType === 'heikin_ashi' ? this.heikinAshiCurrentOffset : this.chartCurrentOffset;
-    },
-    
-    // Helper method to check if all data is loaded based on candle type
-    isAllDataLoaded() {
-        return this.candleType === 'heikin_ashi' ? this.allHeikinAshiDataLoaded : this.allDataLoaded;
-    },
-
-    // NEW: Function to reset all data arrays and flags
+    /**
+     * Resets all data-related states before a new request.
+     */
     resetAllData() {
-        this.chartRequestId = null;
+        this.currentlyFetching = false;
+        this.requestId = null;
+        this.allDataLoaded = false;
         this.allChartData = [];
         this.allVolumeData = [];
-        this.chartCurrentOffset = 0;
-        this.allDataLoaded = false;
-
-        this.heikinAshiRequestId = null;
-        this.allHeikinAshiData = [];
-        this.allHeikinAshiVolumeData = [];
-        this.heikinAshiCurrentOffset = 0;
-        this.allHeikinAshiDataLoaded = false;
-        
-        this.tickRequestId = null;
-        this.allTickData = [];
-        this.allTickVolumeData = [];
-        this.tickCurrentOffset = 0;
-        this.allTickDataLoaded = false;
-
-        console.log("All chart data states have been reset.");
+        if (this.mainSeries) this.mainSeries.setData([]);
+        if (this.volumeSeries) this.volumeSeries.setData([]);
     },
-
-    // UPDATED: Function to process the initial data load for any type
+    
+    /**
+     * Processes the initial data payload from the unified API.
+     */
     processInitialData(responseData, dataType) {
-        const chartFormattedData = responseData.candles.map(c => ({
-            time: c.unix_timestamp,
-            open: c.open,
-            high: c.high,
-            low: c.low,
-            close: c.close
+        this.currentDataType = dataType;
+        this.requestId = responseData.request_id;
+        this.allDataLoaded = !responseData.is_partial;
+
+        this.allChartData = responseData.candles.map(c => ({
+            time: c.unix_timestamp, open: c.open, high: c.high, low: c.low, close: c.close
+        }));
+        this.allVolumeData = responseData.candles.map(c => ({
+            time: c.unix_timestamp, value: c.volume || 0,
+            color: c.close >= c.open ? (elements.volUpColorInput.value + '80') : (elements.volDownColorInput.value + '80')
         }));
 
-        const volumeFormattedData = responseData.candles.map(c => ({
-            time: c.unix_timestamp,
-            value: c.volume || 0,
+        this.mainSeries.setData(this.allChartData);
+        this.volumeSeries.setData(this.allVolumeData);
+    },
+
+    /**
+     * Processes a chunk of older data from the unified chunk endpoint.
+     */
+    processChunkData(chunkData) {
+        this.requestId = chunkData.request_id;
+        this.allDataLoaded = !chunkData.is_partial;
+
+        const chartChunk = chunkData.candles.map(c => ({
+            time: c.unix_timestamp, open: c.open, high: c.high, low: c.low, close: c.close
+        }));
+        const volumeChunk = chunkData.candles.map(c => ({
+            time: c.unix_timestamp, value: c.volume || 0,
             color: c.close >= c.open ? (elements.volUpColorInput.value + '80') : (elements.volDownColorInput.value + '80')
         }));
         
-        // Assign data to the correct state variables based on dataType
-        switch (dataType) {
-            case 'tick':
-                this.allTickData = chartFormattedData;
-                this.allTickVolumeData = volumeFormattedData;
-                this.tickRequestId = responseData.request_id;
-                this.tickCurrentOffset = responseData.offset;
-                this.allTickDataLoaded = !responseData.is_partial;
-                this.mainSeries.setData(this.allTickData);
-                this.volumeSeries.setData(this.allTickVolumeData);
-                break;
-            case 'heikin_ashi':
-                this.allHeikinAshiData = chartFormattedData;
-                this.allHeikinAshiVolumeData = volumeFormattedData;
-                this.heikinAshiRequestId = responseData.request_id;
-                this.heikinAshiCurrentOffset = responseData.offset;
-                this.allHeikinAshiDataLoaded = !responseData.is_partial;
-                this.mainSeries.setData(this.allHeikinAshiData);
-                this.volumeSeries.setData(this.allHeikinAshiVolumeData);
-                break;
-            default: // 'regular'
-                this.allChartData = chartFormattedData;
-                this.allVolumeData = volumeFormattedData;
-                this.chartRequestId = responseData.request_id;
-                this.chartCurrentOffset = responseData.offset;
-                this.allDataLoaded = !responseData.is_partial;
-                this.mainSeries.setData(this.allChartData);
-                this.volumeSeries.setData(this.allVolumeData);
-                break;
-        }
+        this.allChartData = [...chartChunk, ...this.allChartData];
+        this.allVolumeData = [...volumeChunk, ...this.allVolumeData];
+        
+        this.mainSeries.setData(this.allChartData);
+        this.volumeSeries.setData(this.allVolumeData);
+    },
 
-        // Fit content after setting data to ensure the view is correct
-        if (this.chart) {
-            this.chart.timeScale().fitContent();
-        }
-    }
+    /**
+     * Processes a live WebSocket update message.
+     */
+    processLiveUpdate(data) {
+        if (!data || !this.mainSeries) return;
+        
+        const updateSeries = (bar, series, isVolume) => {
+            if (!bar) return;
+            const point = isVolume
+                ? { time: bar.unix_timestamp, value: bar.volume, color: bar.close >= bar.open ? elements.volUpColorInput.value + '80' : elements.volDownColorInput.value + '80' }
+                : { time: bar.unix_timestamp, open: bar.open, high: bar.high, low: bar.low, close: bar.close };
+            series.update(point);
+        };
+        
+        updateSeries(data.completed_bar, this.mainSeries, false);
+        updateSeries(data.completed_bar, this.volumeSeries, true);
+        updateSeries(data.current_bar, this.mainSeries, false);
+        updateSeries(data.current_bar, this.volumeSeries, true);
+    },
 };

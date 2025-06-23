@@ -14,9 +14,11 @@ from websockets.exceptions import ConnectionClosed
 from .config import settings
 from . import schemas
 from .services.live_data_service import BarResampler, TickBarResampler
+from .services.heikin_ashi_calculator import HeikinAshiLiveCalculator
 
 logger = logging.getLogger(__name__)
 
+# (ConnectionInfo and SubscriptionGroup dataclasses remain the same)
 @dataclass
 class ConnectionInfo:
     """Information about a WebSocket connection"""
@@ -24,8 +26,8 @@ class ConnectionInfo:
     symbol: str
     interval: str
     timezone: str
+    data_type: schemas.DataType # <-- ADDED
     connected_at: datetime = field(default_factory=datetime.now)
-    last_activity: datetime = field(default_factory=datetime.now)
 
 @dataclass
 class SubscriptionGroup:
@@ -33,34 +35,18 @@ class SubscriptionGroup:
     channel: str
     symbol: str
     connections: Set[WebSocket] = field(default_factory=set)
-    # NEW: Store stateful resamplers, one for each interval/timezone combination.
-    resamplers: Dict[tuple[str, str], Any] = field(default_factory=dict) # Can be BarResampler or TickBarResampler
+    resamplers: Dict[tuple, Any] = field(default_factory=dict)
     redis_subscription: Optional[Any] = None
-    last_message: Optional[dict] = None
-    created_at: datetime = field(default_factory=datetime.now)
     message_task: Optional[asyncio.Task] = None
 
 class ConnectionManager:
-    """
-    Manages WebSocket connections with Redis subscription pooling.
-    Subscribes to raw tick data and performs aggregation on the server side.
-    """
-
+    """Manages WebSocket connections with Redis subscription pooling."""
     def __init__(self):
-        # Core data structures
         self.connections: Dict[WebSocket, ConnectionInfo] = {}
         self.subscription_groups: Dict[str, SubscriptionGroup] = {}
-
-        # Redis connection with pooling
-        self.redis_client = aioredis.from_url(
-            settings.REDIS_URL,
-            decode_responses=True,
-            max_connections=20,
-            retry_on_timeout=True
-        )
-
-        # Background tasks
+        self.redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
         self._cleanup_task: Optional[asyncio.Task] = None
+
         self._redis_reconnect_delay = 1.0
         self._max_reconnect_delay = 60.0
 
@@ -113,41 +99,37 @@ class ConnectionManager:
         """
         # MODIFIED: Subscribe to the new raw ticks channel.
         return f"live_ticks:{symbol}"
+    
+    def _create_resampler(self, interval: str, timezone: str, data_type: schemas.DataType):
+        """Factory to create the correct resampler or calculator."""
+        if data_type == schemas.DataType.HEIKIN_ASHI:
+            return HeikinAshiLiveCalculator()
+        elif 'tick' in interval:
+            return TickBarResampler(interval)
+        else:
+            return BarResampler(interval, timezone)
 
-    async def add_connection(self, websocket: WebSocket, symbol: str, interval: str, timezone: str) -> bool:
-        """Add a new WebSocket connection to the manager."""
-        try:
-            conn_info = ConnectionInfo(websocket=websocket, symbol=symbol, interval=interval, timezone=timezone)
-            self.connections[websocket] = conn_info
+    async def add_connection(self, websocket: WebSocket, symbol: str, interval: str, timezone: str, data_type: schemas.DataType) -> bool:
+        """Adds a new WebSocket connection to the manager."""
+        conn_info = ConnectionInfo(websocket, symbol, interval, timezone, data_type)
+        self.connections[websocket] = conn_info
+        channel_key = self._get_channel_key(symbol)
 
-            channel_key = self._get_channel_key(symbol)
+        if channel_key not in self.subscription_groups:
+            group = SubscriptionGroup(channel=channel_key, symbol=symbol)
+            self.subscription_groups[channel_key] = group
+            await self._start_redis_subscription(group)
+        
+        group = self.subscription_groups[channel_key]
+        group.connections.add(websocket)
 
-            if channel_key not in self.subscription_groups:
-                group = SubscriptionGroup(channel=channel_key, symbol=symbol)
-                self.subscription_groups[channel_key] = group
-                await self._start_redis_subscription(group)
-                logger.info(f"Created new subscription group for Redis channel {channel_key}")
-
-            group = self.subscription_groups[channel_key]
-            group.connections.add(websocket)
-
-            # Create a stateful resampler for this new client if one doesn't already exist for this combo
-            resampler_key = (interval, timezone)
-            if resampler_key not in group.resamplers:
-                if 'tick' in interval:
-                    group.resamplers[resampler_key] = TickBarResampler(interval)
-                    logger.info(f"Created new TickBarResampler for group {symbol}, key: {resampler_key}")
-                else:
-                    group.resamplers[resampler_key] = BarResampler(interval, timezone)
-                    logger.info(f"Created new BarResampler for group {symbol}, key: {resampler_key}")
-            
-            self.metrics['total_connections'] += 1
-            logger.info(f"Added WebSocket connection for {symbol}/{interval} (total: {len(self.connections)})")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to add WebSocket connection for {symbol}/{interval}: {e}")
-            return False
+        # Create resampler for this connection's config if it doesn't exist
+        resampler_key = (interval, timezone, data_type.value)
+        if resampler_key not in group.resamplers:
+            group.resamplers[resampler_key] = self._create_resampler(interval, timezone, data_type)
+            logger.info(f"Created new resampler for group {symbol}, key: {resampler_key}")
+        
+        return True
 
     async def remove_connection(self, websocket: WebSocket):
         """Remove a WebSocket connection and clean up if necessary"""
@@ -216,39 +198,46 @@ class ConnectionManager:
             asyncio.create_task(self._schedule_redis_reconnect(group))
 
     async def _process_tick_for_group(self, group: SubscriptionGroup, tick_data: dict):
-        """
-        Processes a raw tick for all connections in a group, performing
-        resampling and sending updates in parallel.
-        """
-        if not group.connections:
-            return
-
+        """Processes a raw tick for all connections in a group."""
         tasks = []
-        # A dictionary to hold the results of resampling for each interval/timezone combo
-        payloads_to_send: Dict[tuple[str, str], dict] = {}
+        payloads: Dict[tuple, schemas.LiveDataMessage] = {}
+        
+        regular_resamplers = {k: v for k, v in group.resamplers.items() if isinstance(v, (BarResampler, TickBarResampler))}
 
-        # First, iterate through all unique resamplers in the group and process the tick
-        for resampler_key, resampler in group.resamplers.items():
+        # 1. Process all regular resamplers first
+        for resampler_key, resampler in regular_resamplers.items():
             completed_bar = resampler.add_bar(tick_data)
-            payloads_to_send[resampler_key] = {
-                "completed_bar": completed_bar.model_dump() if completed_bar else None,
-                "current_bar": resampler.current_bar.model_dump() if resampler.current_bar else None
-            }
+            payloads[resampler_key] = schemas.LiveDataMessage(
+                completed_bar=completed_bar,
+                current_bar=resampler.current_bar
+            )
+        
+        # 2. Process Heikin Ashi calculators using the results of regular resamplers
+        for resampler_key, calculator in group.resamplers.items():
+            if isinstance(calculator, HeikinAshiLiveCalculator):
+                # Find the matching regular resampler payload
+                regular_key = (resampler_key[0], resampler_key[1], 'regular')
+                if regular_key in payloads:
+                    regular_payload = payloads[regular_key]
+                    completed_ha, current_ha = None, None
+                    if regular_payload.completed_bar:
+                        completed_ha = calculator.calculate_next_completed(regular_payload.completed_bar)
+                    if regular_payload.current_bar:
+                        current_ha = calculator.calculate_current_bar(regular_payload.current_bar)
+                    
+                    payloads[resampler_key] = schemas.LiveDataMessage(
+                        completed_bar=completed_ha,
+                        current_bar=current_ha
+                    )
 
-        # Now, create send tasks for each active connection
-        active_websockets = list(group.connections)
-        for websocket in active_websockets:
+        # 3. Send the correct payload to each websocket
+        for websocket in list(group.connections):
             conn_info = self.connections.get(websocket)
-            if not conn_info:
-                continue
-
-            # Find the correct payload for this connection's interval/timezone
-            payload_key = (conn_info.interval, conn_info.timezone)
-            if payload_key in payloads_to_send:
-                tasks.append(self._send_to_websocket(websocket, payloads_to_send[payload_key]))
-                conn_info.last_activity = datetime.now()
-                self.metrics['messages_sent'] += 1
-
+            if conn_info:
+                payload_key = (conn_info.interval, conn_info.timezone, conn_info.data_type.value)
+                if payload_key in payloads:
+                    tasks.append(self._send_to_websocket(websocket, payloads[payload_key].model_dump(exclude_none=True)))
+        
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 

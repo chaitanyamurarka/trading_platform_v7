@@ -2,6 +2,7 @@
 import { state } from './2-state.js';
 import * as elements from './1-dom-elements.js';
 import { fetchAndPrependHeikinAshiChunk, fetchAndPrependTickChunk } from './6-api-service.js';
+import { fetchAndPrependChunk } from './data_service.js';
 
 function formatPrice(price, decimals = 2) {
     if (price === null || price === undefined) return 'N/A';
@@ -100,19 +101,9 @@ export function setupChartInfiniteScroll() {
     if (!state.mainChart) return;
 
     state.mainChart.timeScale().subscribeVisibleLogicalRangeChange((newRange) => {
-        // We fetch when the user scrolls near the beginning (logical index <= 10)
         if (newRange && newRange.from <= 10 && !state.currentlyFetching) {
-            if (state.candleType === 'heikin_ashi') {
-                if (!state.allHeikinAshiDataLoaded) fetchAndPrependHeikinAshiChunk();
-            } else if (state.candleType === 'tick') {
-                // Call our new tick-specific chunk loader
-                if (!state.allTickDataLoaded) fetchAndPrependTickChunk();
-            } else {
-                // Existing logic for regular time-based candles
-                if (!state.allDataLoaded) {
-                    // You might need to re-import and call fetchAndPrependRegularCandleChunk here
-                }
-            }
+            // Always call the single unified chunk loader
+            fetchAndPrependChunk(); 
         }
     });
 }
