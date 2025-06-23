@@ -1,18 +1,13 @@
 // frontend/static/js/app/12-chart-interaction-listeners.js
-// REFACTORED to align with the new unified API service
-
 import { state } from './2-state.js';
 import * as elements from './1-dom-elements.js';
-// Import the single, unified chunk loading function from our refactored service
-import { fetchAndPrependChunk } from './6-api-service.js';
+import { fetchAndPrependHeikinAshiChunk, fetchAndPrependTickChunk } from './6-api-service.js';
 
-// This function formats the price for the legend. No changes needed.
 function formatPrice(price, decimals = 2) {
     if (price === null || price === undefined) return 'N/A';
     return parseFloat(price).toFixed(decimals);
 }
 
-// This function formats the volume for the legend. No changes needed.
 function formatVolume(volume) {
     if (volume === null || volume === undefined) return 'N/A';
     const num = parseInt(volume);
@@ -20,7 +15,6 @@ function formatVolume(volume) {
     if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
     return num.toString();
 }
-
 
 function updateOHLCLegend(priceData, volumeData) {
     if (!state.showOHLCLegend || !priceData) {
@@ -102,23 +96,23 @@ export function setupChartInteractionListeners() {
     });
 }
 
-/**
- * REFACTORED: Sets up infinite scroll on the chart's time scale.
- * The logic is now simplified to call a single function regardless of data type.
- */
 export function setupChartInfiniteScroll() {
     if (!state.mainChart) return;
 
     state.mainChart.timeScale().subscribeVisibleLogicalRangeChange((newRange) => {
-        // We fetch more data when the user scrolls near the beginning of the current data set.
-        const shouldFetchMore = newRange && newRange.from <= 10;
-
-        // The previous if/else block that checked the candleType is now gone.
-        // We simply call the single, unified 'fetchAndPrependChunk' function.
-        // This function already knows the current data type from the global state
-        // and handles all the necessary checks internally.
-        if (shouldFetchMore) {
-            fetchAndPrependChunk();
+        // We fetch when the user scrolls near the beginning (logical index <= 10)
+        if (newRange && newRange.from <= 10 && !state.currentlyFetching) {
+            if (state.candleType === 'heikin_ashi') {
+                if (!state.allHeikinAshiDataLoaded) fetchAndPrependHeikinAshiChunk();
+            } else if (state.candleType === 'tick') {
+                // Call our new tick-specific chunk loader
+                if (!state.allTickDataLoaded) fetchAndPrependTickChunk();
+            } else {
+                // Existing logic for regular time-based candles
+                if (!state.allDataLoaded) {
+                    // You might need to re-import and call fetchAndPrependRegularCandleChunk here
+                }
+            }
         }
     });
 }

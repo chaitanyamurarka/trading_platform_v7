@@ -143,24 +143,3 @@ class TickDataChunkResponse(BaseModel):
     offset: int = 0
     limit: int = 5000
     total_available: int = 0
-
-# +++ NEW UNIFIED SCHEMAS +++
-class UnifiedDataResponse(BaseModel):
-    """
-    A unified response model for all historical data requests.
-    The 'candles' field can hold any type of candle data.
-    """
-    request_id: Optional[str] = Field(None, description="A unique ID for this data session, used for fetching subsequent chunks.")
-    candles: List[Any] = Field(description="A list of candle data (regular, Heikin Ashi, etc.).")
-    is_partial: bool = Field(description="True if this is a subset of the total available data.")
-    message: str = Field(description="A descriptive message about the result.")
-    offset: Optional[int] = Field(None, description="The offset of the current data chunk (for non-cursor pagination).")
-    total_available: Optional[int] = Field(None, description="The total number of data points available.")
-
-class LiveDataMessage(BaseModel):
-    """
-    A unified model for live data messages sent over WebSocket.
-    """
-    data_type: str # 'regular', 'heikin_ashi', 'tick'
-    completed_bar: Optional[Any] = None
-    current_bar: Optional[Any] = None
