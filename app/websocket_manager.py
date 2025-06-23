@@ -121,7 +121,9 @@ class ConnectionManager:
         
         resampler_key = (interval, timezone)
         if resampler_key not in group.resamplers:
-            resampler = TickBarResampler(interval) if 'tick' in interval else BarResampler(interval, timezone)
+            # --- MODIFICATION START: Pass timezone to TickBarResampler ---
+            resampler = TickBarResampler(interval, timezone) if 'tick' in interval else BarResampler(interval, timezone)
+            # --- MODIFICATION END ---
             group.resamplers[resampler_key] = resampler
             logger.info(f"Created new {type(resampler).__name__} for group {symbol}, key: {resampler_key}")
 

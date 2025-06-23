@@ -6,23 +6,22 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .. import schemas
 
 # --- Get Logger ---
-# Standard practice to get a logger instance for the current module
 logger = logging.getLogger(__name__)
 
 class TickBarResampler:
     """
     Aggregates raw ticks into bars of a specified tick-count.
-    
-    This class is stateful and designed to be used per interval. For example, if a
-    client wants 100-tick bars, this class will collect 100 raw ticks, assemble them
-    into a single OHLC bar, and then reset.
+    This class is now timezone-aware to produce correct timestamps for the frontend.
     """
-    def __init__(self, interval_str: str):
+    # --- MODIFICATION START: Added timezone_str to __init__ ---
+    def __init__(self, interval_str: str, timezone_str: str):
+    # --- MODIFICATION END ---
         """
         Initializes the resampler with the number of ticks required for each bar.
         
         Args:
             interval_str (str): The interval string, e.g., "100tick".
+            timezone_str (str): The IANA timezone name, e.g., "America/New_York".
         """
         try:
             self.ticks_per_bar = int(interval_str.replace('tick', ''))
@@ -32,41 +31,53 @@ class TickBarResampler:
             
         self.current_bar: Optional[schemas.Candle] = None
         self.tick_count = 0
+        # --- MODIFICATION START: Store the timezone ---
+        try:
+            self.tz = ZoneInfo(timezone_str)
+        except ZoneInfoNotFoundError:
+            logger.warning(f"Timezone '{timezone_str}' not found. Defaulting to UTC.")
+            self.tz = dt_timezone.utc
+        # --- MODIFICATION END ---
+
 
     def add_bar(self, tick_data: Dict) -> Optional[schemas.Candle]:
         """
-        Processes a single raw tick. If a bar is completed, it returns the bar.
-        
-        Args:
-            tick_data (Dict): A dictionary containing 'price', 'volume', and 'timestamp'.
-            
-        Returns:
-            Optional[schemas.Candle]: The completed OHLC candle, or None if the bar is still in progress.
+        Processes a single raw tick. If a bar is completed, it returns the bar
+        with a frontend-compatible 'fake UTC' timestamp.
         """
-        # --- Input validation ---
         if not all(k in tick_data for k in ['price', 'volume', 'timestamp']):
             logger.warning(f"Malformed tick data received: {tick_data}")
             return None
 
-        price, volume, ts = float(tick_data['price']), int(tick_data['volume']), tick_data['timestamp']
+        price, volume, ts_float = float(tick_data['price']), int(tick_data['volume']), tick_data['timestamp']
         
+        # --- MODIFICATION START: Apply "fake UTC" timestamp logic ---
+        ts_utc = datetime.fromtimestamp(ts_float, tz=dt_timezone.utc)
+        local_dt = ts_utc.astimezone(self.tz)
+        fake_utc_dt = datetime(
+            local_dt.year, local_dt.month, local_dt.day,
+            local_dt.hour, local_dt.minute, local_dt.second,
+            microsecond=local_dt.microsecond,
+            tzinfo=dt_timezone.utc
+        )
+        fake_unix_timestamp = fake_utc_dt.timestamp()
+        # --- MODIFICATION END ---
+
         if not self.current_bar:
-            # --- Start of a new bar ---
-            self.current_bar = schemas.Candle(open=price, high=price, low=price, close=price, volume=volume, unix_timestamp=ts)
+            self.current_bar = schemas.Candle(open=price, high=price, low=price, close=price, volume=volume, unix_timestamp=fake_unix_timestamp)
             self.tick_count = 1
         else:
-            # --- Update the in-progress bar ---
             self.current_bar.high = max(self.current_bar.high, price)
             self.current_bar.low = min(self.current_bar.low, price)
             self.current_bar.close = price
             self.current_bar.volume += volume
-            self.current_bar.unix_timestamp = ts  # Always update to the latest tick's timestamp
+            # The timestamp of the bar is always the timestamp of the LATEST tick in that bar.
+            self.current_bar.unix_timestamp = fake_unix_timestamp
             self.tick_count += 1
         
-        # --- Check if the bar is complete ---
         if self.tick_count >= self.ticks_per_bar:
             completed_bar = self.current_bar
-            self.current_bar = None  # Reset for the next bar
+            self.current_bar = None
             self.tick_count = 0
             return completed_bar
             
@@ -75,18 +86,9 @@ class TickBarResampler:
 class BarResampler:
     """
     Aggregates raw ticks into time-based OHLCV bars (e.g., 1-minute, 5-minute).
-    
-    This class is stateful and timezone-aware. It correctly buckets ticks into
-    time windows based on the client's specified timezone.
+    This class is stateful and timezone-aware.
     """
     def __init__(self, interval_str: str, timezone_str: str):
-        """
-        Initializes the resampler with a time interval and a client timezone.
-        
-        Args:
-            interval_str (str): The time interval string, e.g., "1m", "5s".
-            timezone_str (str): The IANA timezone name, e.g., "America/New_York".
-        """
         self.interval_td = self._parse_interval(interval_str)
         self.current_bar: Optional[schemas.Candle] = None
         try:
@@ -96,41 +98,17 @@ class BarResampler:
             self.tz = dt_timezone.utc
 
     def _parse_interval(self, s: str) -> timedelta:
-        """Helper to convert an interval string into a timedelta object."""
         unit, value = s[-1], int(s[:-1])
         if unit == 's': return timedelta(seconds=value)
         if unit == 'm': return timedelta(minutes=value)
         if unit == 'h': return timedelta(hours=value)
         raise ValueError(f"Invalid time-based interval: {s}")
 
-    def _get_bar_start_time(self, dt_utc: datetime) -> float:
-        """
-        Calculates the start timestamp for the bar that a given tick belongs to.
-        This correctly "snaps" the tick to the beginning of its interval window.
-        
-        For example, a tick at 10:01:23 for a '1m' interval will be snapped to 10:01:00.
-        
-        Args:
-            dt_utc (datetime): The UTC timestamp of the raw tick.
-            
-        Returns:
-            float: The UNIX timestamp for the start of the bar.
-        """
-        local_dt = dt_utc.astimezone(self.tz)
-        interval_seconds = self.interval_td.total_seconds()
-        ts = local_dt.timestamp()
-        bar_start_local_ts = ts - (ts % interval_seconds)
-        return bar_start_local_ts
-
+    # --- MODIFICATION START: Removed _get_bar_start_time and integrated logic into add_bar ---
     def add_bar(self, tick_data: Dict) -> Optional[schemas.Candle]:
         """
-        Processes a single raw tick. If a new time interval begins, it returns the previously completed bar.
-        
-        Args:
-            tick_data (Dict): A dictionary containing 'price', 'volume', and 'timestamp'.
-            
-        Returns:
-            Optional[schemas.Candle]: The completed OHLC candle, or None if the bar is still in progress.
+        Processes a single raw tick. If a new time interval begins, it returns the
+        previously completed bar with a frontend-compatible 'fake UTC' timestamp.
         """
         if not all(k in tick_data for k in ['price', 'volume', 'timestamp']):
             logger.warning(f"Malformed tick data received: {tick_data}")
@@ -138,25 +116,44 @@ class BarResampler:
 
         price, volume = float(tick_data['price']), int(tick_data['volume'])
         ts_utc = datetime.fromtimestamp(tick_data['timestamp'], tz=dt_timezone.utc)
-        bar_start_unix = self._get_bar_start_time(ts_utc)
+        
+        # 1. Convert tick's UTC time to the target local timezone
+        local_dt = ts_utc.astimezone(self.tz)
+        
+        # 2. Snap the local time to the start of the interval window
+        interval_seconds = self.interval_td.total_seconds()
+        local_ts = local_dt.timestamp()
+        bar_start_local_ts_float = local_ts - (local_ts % interval_seconds)
+        
+        # 3. Convert the snapped local timestamp back to a local datetime object
+        bar_start_local_dt = datetime.fromtimestamp(bar_start_local_ts_float, self.tz)
+
+        # 4. Create the "fake" UTC timestamp from the local datetime components
+        fake_utc_dt = datetime(
+            bar_start_local_dt.year, bar_start_local_dt.month, bar_start_local_dt.day,
+            bar_start_local_dt.hour, bar_start_local_dt.minute, bar_start_local_dt.second,
+            tzinfo=dt_timezone.utc
+        )
+        bar_start_unix = fake_utc_dt.timestamp()
         
         if not self.current_bar:
-            # --- Start the very first bar ---
+            # Start the very first bar
             self.current_bar = schemas.Candle(open=price, high=price, low=price, close=price, volume=volume, unix_timestamp=bar_start_unix)
         elif bar_start_unix > self.current_bar.unix_timestamp:
-            # --- A new time interval has started, so the previous bar is complete ---
+            # A new time interval has started, so the previous bar is complete
             completed_bar = self.current_bar
             # Start the new bar with the current tick's data
             self.current_bar = schemas.Candle(open=price, high=price, low=price, close=price, volume=volume, unix_timestamp=bar_start_unix)
             return completed_bar
         else:
-            # --- The tick belongs to the current bar, so update it ---
+            # The tick belongs to the current bar, so update it
             self.current_bar.high = max(self.current_bar.high, price)
             self.current_bar.low = min(self.current_bar.low, price)
             self.current_bar.close = price
             self.current_bar.volume += volume
             
         return None
+    # --- MODIFICATION END ---
 
 def resample_ticks_to_bars(
     ticks: List[Dict],
@@ -165,23 +162,16 @@ def resample_ticks_to_bars(
 ) -> List[schemas.Candle]:
     """
     Resamples a list of raw tick data into OHLC bars of a specified interval.
-
-    Args:
-        ticks: A list of tick dictionaries, e.g., [{'price':, 'volume':, 'timestamp':}].
-        target_interval_str: The desired output interval (e.g., "5m", "100tick").
-        target_timezone_str: The IANA timezone for aligning time-based bars.
-
-    Returns:
-        A new list of resampled OHLC candle objects.
     """
     if not ticks:
         return []
 
     logger.info(f"Resampling {len(ticks)} ticks into {target_interval_str} bars.")
 
-    # Instantiate the correct resampler based on the interval type.
+    # --- MODIFICATION START: Pass timezone to TickBarResampler ---
     is_tick_based = 'tick' in target_interval_str
-    resampler = TickBarResampler(target_interval_str) if is_tick_based else BarResampler(target_interval_str, target_timezone_str)
+    resampler = TickBarResampler(target_interval_str, target_timezone_str) if is_tick_based else BarResampler(target_interval_str, target_timezone_str)
+    # --- MODIFICATION END ---
     
     completed_bars: List[schemas.Candle] = []
     for tick in ticks:
@@ -189,7 +179,6 @@ def resample_ticks_to_bars(
         if completed_bar:
             completed_bars.append(completed_bar)
             
-    # Add the final, in-progress bar if it exists.
     if resampler.current_bar:
         completed_bars.append(resampler.current_bar)
         
