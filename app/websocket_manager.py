@@ -1,4 +1,4 @@
-# chaitanyamurarka/trading_platform_v7/trading_platform_v7-453e29a60b38870dc8c9a94acffec1826c839dee/app/websocket_manager.py
+# chaitanyamurarka/trading_platform_v7/trading_platform_v7-b416586615a6242166ca4cc60bdb75122687b219/app/websocket_manager.py
 import asyncio
 import json
 import logging
@@ -11,6 +11,7 @@ from websockets.exceptions import ConnectionClosed
 
 from .config import settings
 from . import schemas
+# Correctly import the resampler classes to check their type
 from .services.live_data_handler import BarResampler, TickBarResampler, resample_ticks_to_bars
 from .services.heikin_ashi_calculator import HeikinAshiLiveCalculator, calculate_historical_heikin_ashi
 
@@ -201,10 +202,19 @@ class ConnectionManager:
                 completed_bar = resampler.add_bar(tick_data)
                 current_bar = resampler.current_bar
                 
-                payloads[(schemas.DataType.REGULAR, *resampler_key)] = {
+                # ========================= FIX START =========================
+                # Determine the correct data type based on the resampler instance.
+                # This ensures that tick data is keyed correctly for tick-based clients.
+                if isinstance(resampler, TickBarResampler):
+                    data_type_key = schemas.DataType.TICK
+                else:
+                    data_type_key = schemas.DataType.REGULAR
+
+                payloads[(data_type_key, *resampler_key)] = {
                     "completed_bar": completed_bar.model_dump() if completed_bar else None,
                     "current_bar": current_bar.model_dump() if current_bar else None
                 }
+                # ========================== FIX END ==========================
 
                 if resampler_key in group.heikin_ashi_calculators:
                     ha_calc = group.heikin_ashi_calculators[resampler_key]
@@ -235,6 +245,7 @@ class ConnectionManager:
             conn_info = self.connections.get(websocket)
             if not conn_info: continue
             
+            # This lookup will now succeed for tick-based connections
             payload_key = (conn_info.data_type, conn_info.interval, conn_info.timezone)
             if payload_key in payloads:
                 tasks.append(websocket.send_json(payloads[payload_key]))
