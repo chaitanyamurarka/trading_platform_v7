@@ -3,6 +3,7 @@
 import logging
 import json
 import base64
+import time  # Added for timing
 from datetime import datetime, timezone as dt_timezone
 from typing import List, Optional, Union
 from fastapi import HTTPException
@@ -41,10 +42,19 @@ def _query_and_process_influx_data(flux_query: str, timezone_str: str) -> List[s
     except Exception:
         target_tz = ZoneInfo("UTC")
 
+    # Start timing InfluxDB query
+    start_time = time.time()
     tables = query_api.query(query=flux_query)
+    query_time = time.time() - start_time
+    
+    # Start timing data processing
+    process_start = time.time()
     candles = []
+    record_count = 0
+    
     for table in tables:
         for record in table.records:
+            record_count += 1
             utc_dt = record.get_time()
             local_dt = utc_dt.astimezone(target_tz)
             # Create a "fake" UTC datetime to get the correct UNIX timestamp for the frontend library
@@ -65,6 +75,13 @@ def _query_and_process_influx_data(flux_query: str, timezone_str: str) -> List[s
                 volume=record['volume'],
                 unix_timestamp=unix_timestamp_for_chart
             ))
+    
+    process_time = time.time() - process_start
+    total_time = time.time() - start_time
+    
+    # Log timing information
+    logging.info(f"InfluxDB Query Performance: Query execution: {query_time:.3f}s, Data processing: {process_time:.3f}s, Total: {total_time:.3f}s, Records: {record_count}")
+    
     return candles
 
 def _calculate_heikin_ashi(regular_candles: List[schemas.Candle]) -> List[schemas.HeikinAshiCandle]:
@@ -179,7 +196,13 @@ def _get_offset_based_data(session_token: str, exchange: str, token: str, interv
               |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
               |> sort(columns: ["_time"])
         """
+        
+        # Time the entire InfluxDB operation
+        fetch_start = time.time()
         full_data = _query_and_process_influx_data(flux_query, timezone)
+        fetch_time = time.time() - fetch_start
+        
+        logging.info(f"InfluxDB fetch completed in {fetch_time:.3f}s for {len(full_data)} records")
 
         if not full_data:
              return schemas.HistoricalDataResponse(candles=[], total_available=0, is_partial=False, message="No data available for this range.", request_id=None, offset=None)
@@ -269,7 +292,13 @@ def _get_initial_tick_data(session_token: str, exchange: str, token: str, interv
           |> limit(n: {INITIAL_FETCH_LIMIT})
           |> sort(columns: ["_time"])
     """
+    
+    # Time the tick data fetch
+    fetch_start = time.time()
     candles_to_send = _query_and_process_influx_data(flux_query, timezone)
+    fetch_time = time.time() - fetch_start
+    
+    logging.info(f"InfluxDB tick data fetch completed in {fetch_time:.3f}s for {len(candles_to_send)} records")
 
     if not candles_to_send:
         return schemas.TickDataResponse(candles=[], is_partial=False, message="No data available for this range.", request_id=None)
@@ -312,7 +341,13 @@ def _get_tick_data_chunk(request_id: str, limit: int) -> schemas.TickDataChunkRe
           |> limit(n: {limit})
           |> sort(columns: ["_time"])
     """
+    
+    # Time the chunk fetch
+    fetch_start = time.time()
     candles_to_send = _query_and_process_influx_data(flux_query, cursor_data['timezone'])
+    fetch_time = time.time() - fetch_start
+    
+    logging.info(f"InfluxDB tick chunk fetch completed in {fetch_time:.3f}s for {len(candles_to_send)} records")
 
     if not candles_to_send:
         return schemas.TickDataChunkResponse(candles=[], is_partial=False, request_id=None)
