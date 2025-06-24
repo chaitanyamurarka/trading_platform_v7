@@ -1,5 +1,6 @@
-# chaitanyamurarka/trading_platform_v7/trading_platform_v7-453e29a60b38870dc8c9a94acffec1826c839dee/app/services/live_data_handler.py
+# chaitanyamurarka/trading_platform_v7/trading_platform_v7-e2d358352a61cb7a1309edf91f97d1e2f22f6d7b/app/services/live_data_handler.py
 import logging
+import asyncio
 from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import Dict, Optional, List, Union
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -149,28 +150,36 @@ class BarResampler:
             
         return None
 
-def resample_ticks_to_bars(
+async def resample_ticks_to_bars(
     ticks: List[Dict],
     target_interval_str: str,
-    target_timezone_str: str
+    target_timezone_str: str,
+    chunk_size: int = 25000
 ) -> List[schemas.Candle]:
     """
-    Resamples a list of raw tick data into OHLC bars of a specified interval.
+    Asynchronously resamples a list of raw tick data into OHLC bars,
+    yielding control to the event loop periodically to prevent blocking.
     """
     if not ticks:
         return []
 
-    logger.info(f"Resampling {len(ticks)} ticks into {target_interval_str} bars.")
+    logger.info(f"Asynchronously resampling {len(ticks)} ticks into {target_interval_str} bars.")
 
     is_tick_based = 'tick' in target_interval_str
     resampler = TickBarResampler(target_interval_str, target_timezone_str) if is_tick_based else BarResampler(target_interval_str, target_timezone_str)
     
     completed_bars: List[schemas.Candle] = []
-    for tick in ticks:
-        completed_bar = resampler.add_bar(tick)
-        if completed_bar:
-            completed_bars.append(completed_bar)
+    for i in range(0, len(ticks), chunk_size):
+        chunk = ticks[i:i + chunk_size]
+        for tick in chunk:
+            completed_bar = resampler.add_bar(tick)
+            if completed_bar:
+                completed_bars.append(completed_bar)
+        
+        # Yield control to the event loop to prevent blocking
+        await asyncio.sleep(0)
             
+    # Add the final, in-progress bar
     if resampler.current_bar:
         completed_bars.append(resampler.current_bar)
         

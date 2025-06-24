@@ -1,3 +1,4 @@
+# chaitanyamurarka/trading_platform_v7/trading_platform_v7-e2d358352a61cb7a1309edf91f97d1e2f22f6d7b/app/routers/unified_data_router.py
 import logging
 from fastapi import APIRouter, Query, HTTPException, WebSocket, WebSocketDisconnect, Path
 from datetime import datetime
@@ -93,21 +94,33 @@ def initiate_session_fake():
 def session_heartbeat_fake(session: schemas.SessionInfo):
     return session_service.process_heartbeat(session)
 
-# --- FAKE WebSocket Endpoints ---
+# --- WebSocket Handlers ---
 
 async def websocket_handler(websocket: WebSocket, symbol: str, interval: str, timezone: str, data_type: schemas.DataType):
-    """Generic handler for all live data websockets."""
+    """Generic handler for all live data websockets, now robust against client-side race conditions."""
     await websocket.accept()
+    connection_successful = False
     try:
-        await connection_manager.add_connection(websocket, symbol, interval, timezone, data_type)
-        # Keep the connection alive; the manager will push updates.
-        while True:
-            await websocket.receive_text() # Or use a sleep loop if no client messages are expected
+        # The add_connection function now returns a status.
+        connection_successful = await connection_manager.add_connection(websocket, symbol, interval, timezone, data_type)
+        
+        # --- THE DEFINITIVE FIX ---
+        # Only proceed to the listening loop if the connection was successfully established.
+        # If not, the client has already disconnected, and we should just let the `finally` block clean up.
+        if connection_successful:
+            while True:
+                # This loop keeps the connection alive on the server-side.
+                # The `receive_text` call will raise a WebSocketDisconnect when the client closes the connection normally.
+                await websocket.receive_text()
+                
     except WebSocketDisconnect:
-        logger.info(f"Client disconnected: {symbol}/{interval}/{data_type.value}")
+        # This is the normal path for a client closing the connection.
+        logger.info(f"Client disconnected gracefully: {symbol}/{interval}/{data_type.value}")
     except Exception as e:
+        # This will catch any other unexpected errors in the handler.
         logger.error(f"Error in websocket handler for {symbol}: {e}", exc_info=True)
     finally:
+        # This cleanup runs regardless of how the connection was closed.
         await connection_manager.remove_connection(websocket)
         logger.info(f"Cleaned up connection for: {symbol}/{interval}/{data_type.value}")
 
@@ -123,3 +136,4 @@ async def get_live_heikin_ashi_data_fake(
     websocket: WebSocket, symbol: str = Path(...), interval: str = Path(...), timezone: str = Path(...)
 ):
     await websocket_handler(websocket, symbol, interval, timezone, schemas.DataType.HEIKIN_ASHI)
+

@@ -1,4 +1,4 @@
-# chaitanyamurarka/trading_platform_v7/trading_platform_v7-b416586615a6242166ca4cc60bdb75122687b219/app/websocket_manager.py
+# chaitanyamurarka/trading_platform_v7/trading_platform_v7-e2d358352a61cb7a1309edf91f97d1e2f22f6d7b/app/websocket_manager.py
 import asyncio
 import json
 import logging
@@ -6,12 +6,11 @@ from typing import Dict, Set, Optional, Any, Union
 from dataclasses import dataclass, field
 from datetime import datetime
 import redis.asyncio as aioredis
-from starlette.websockets import WebSocket
+from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 from websockets.exceptions import ConnectionClosed
 
 from .config import settings
 from . import schemas
-# Correctly import the resampler classes to check their type
 from .services.live_data_handler import BarResampler, TickBarResampler, resample_ticks_to_bars
 from .services.heikin_ashi_calculator import HeikinAshiLiveCalculator, calculate_historical_heikin_ashi
 
@@ -25,7 +24,7 @@ class ConnectionInfo:
     symbol: str
     interval: str
     timezone: str
-    data_type: schemas.DataType # NEW: Track what kind of data the client wants
+    data_type: schemas.DataType
     connected_at: datetime = field(default_factory=datetime.now)
 
 @dataclass
@@ -34,9 +33,7 @@ class SubscriptionGroup:
     channel: str
     symbol: str
     connections: Set[WebSocket] = field(default_factory=set)
-    # Stateful resamplers for regular OHLC, keyed by (interval, timezone)
     resamplers: Dict[tuple[str, str], Union[BarResampler, TickBarResampler]] = field(default_factory=dict)
-    # NEW: Stateful calculators for Heikin Ashi, keyed by (interval, timezone)
     heikin_ashi_calculators: Dict[tuple[str, str], HeikinAshiLiveCalculator] = field(default_factory=dict)
     redis_subscription: Optional[Any] = None
     message_task: Optional[asyncio.Task] = None
@@ -68,63 +65,66 @@ class ConnectionManager:
     def _get_channel_key(self, symbol: str) -> str:
         return f"live_ticks:{symbol}"
 
-    async def _send_backfill_data(self, websocket: WebSocket, conn_info: ConnectionInfo):
-        """Sends a backfill of recent data from cache to a new client by resampling raw ticks."""
+    async def _send_backfill_data(self, websocket: WebSocket, conn_info: ConnectionInfo) -> bool:
+        """
+        Sends backfill data and returns a boolean indicating success.
+        Returns False if the client disconnects at any point.
+        """
         logger.info(f"Attempting backfill for {conn_info.symbol}/{conn_info.interval} ({conn_info.data_type.value})")
         try:
-            # 1. Fetch raw ticks from the Redis cache populated by the ingestor
+            if websocket.client_state != WebSocketState.CONNECTED:
+                logger.warning(f"Client disconnected before backfill could start for {conn_info.symbol}. Aborting.")
+                return False
+
             cache_key = f"intraday_ticks:{conn_info.symbol}"
             cached_ticks_str = await self.redis_client.lrange(cache_key, 0, -1)
             
             if not cached_ticks_str:
-                logger.warning(f"No backfill tick data found in Redis cache for {conn_info.symbol}.")
-                await websocket.send_json([]) # Send empty array to confirm connection
-                return
+                if websocket.client_state == WebSocketState.CONNECTED: await websocket.send_json([])
+                return True
 
             ticks = [json.loads(t) for t in cached_ticks_str]
             if not ticks:
-                logger.warning(f"Backfill tick data for {conn_info.symbol} was empty after JSON parsing.")
-                await websocket.send_json([])
-                return
+                if websocket.client_state == WebSocketState.CONNECTED: await websocket.send_json([])
+                return True
 
-            # 2. Resample the raw ticks into the client's requested interval
-            resampled_bars = resample_ticks_to_bars(
-                ticks, conn_info.interval, conn_info.timezone
-            )
-            
-            # Note: resample_ticks_to_bars can return an empty list if not enough ticks exist to form a bar.
-            # This is expected behavior.
+            resampled_bars = await resample_ticks_to_bars(ticks, conn_info.interval, conn_info.timezone)
+
+            if websocket.client_state != WebSocketState.CONNECTED:
+                logger.warning(f"Client disconnected during backfill processing for {conn_info.symbol}. Aborting send.")
+                return False
 
             final_bars = resampled_bars
-            # 3. If Heikin Ashi is requested, convert the resampled bars
             if conn_info.data_type == schemas.DataType.HEIKIN_ASHI:
                 final_bars = calculate_historical_heikin_ashi(resampled_bars)
 
-            # 4. Send the final list of bars to the client
             if final_bars:
                 payload = [bar.model_dump() for bar in final_bars]
                 await websocket.send_json(payload)
                 logger.info(f"Sent {len(payload)} backfilled bars to client for {conn_info.symbol}/{conn_info.interval}")
             else:
-                logger.info(f"No bars to send for backfill for {conn_info.symbol}/{conn_info.interval}, sending empty list.")
                 await websocket.send_json([])
 
+            return True
 
+        except (WebSocketDisconnect, ConnectionClosed):
+            logger.info(f"Could not send backfill to {conn_info.symbol}; client disconnected during the process.")
+            return True
+        
         except Exception as e:
-            logger.error(f"Error sending backfill data for {conn_info.symbol}: {e}", exc_info=True)
+            logger.error(f"An unexpected error occurred sending backfill data for {conn_info.symbol}: {e}", exc_info=True)
+            return False
 
 
-    async def add_connection(self, websocket: WebSocket, symbol: str, interval: str, timezone: str, data_type: schemas.DataType):
+    async def add_connection(self, websocket: WebSocket, symbol: str, interval: str, timezone: str, data_type: schemas.DataType) -> bool:
         """
-        Adds a new WebSocket connection, sends backfill data, and then subscribes the connection to the live feed.
-        --- MODIFIED: Sends backfill BEFORE adding the connection to the live group to prevent race conditions. ---
+        Adds a new WebSocket connection. Returns False if the connection is terminated during setup.
         """
         conn_info = ConnectionInfo(websocket, symbol, interval, timezone, data_type)
         self.connections[websocket] = conn_info
         
         channel_key = self._get_channel_key(symbol)
         
-        # Ensure the subscription group and its Redis listener exist.
         if channel_key not in self.subscription_groups:
             group = SubscriptionGroup(channel=channel_key, symbol=symbol)
             self.subscription_groups[channel_key] = group
@@ -133,7 +133,6 @@ class ConnectionManager:
         group = self.subscription_groups[channel_key]
         resampler_key = (interval, timezone)
         
-        # Create necessary resamplers if they don't exist for the group.
         if resampler_key not in group.resamplers:
             resampler_class = TickBarResampler if 'tick' in interval else BarResampler
             group.resamplers[resampler_key] = resampler_class(interval, timezone)
@@ -143,15 +142,16 @@ class ConnectionManager:
             group.heikin_ashi_calculators[resampler_key] = HeikinAshiLiveCalculator()
             logger.info(f"Created new HeikinAshiLiveCalculator for group {symbol}, key: {resampler_key}")
 
-        # --- FIX: Send historical backfill data FIRST. ---
-        # This ensures the client has a stable historical state before receiving any live updates.
-        await self._send_backfill_data(websocket, conn_info)
+        # The backfill function now returns a status.
+        backfill_successful = await self._send_backfill_data(websocket, conn_info)
 
-        # --- FIX: Now, add the connection to the live group. ---
-        # The client will now start receiving live tick updates. Any ticks missed during backfill
-        # are an acceptable trade-off for a guaranteed-correct initial chart load.
-        group.connections.add(websocket)
-        logger.info(f"Connection {websocket.client.host}:{websocket.client.port} for {symbol}/{interval} is now live.")
+        if backfill_successful and websocket.client_state == WebSocketState.CONNECTED:
+            group.connections.add(websocket)
+            logger.info(f"Connection {websocket.client.host}:{websocket.client.port} for {symbol}/{interval} is now live.")
+            return True
+        else:
+            logger.warning(f"Did not add {symbol}/{interval} to live group; client disconnected during backfill.")
+            return False
 
     async def remove_connection(self, websocket: WebSocket):
         if websocket not in self.connections: return
@@ -159,25 +159,21 @@ class ConnectionManager:
         group = self.subscription_groups.get(self._get_channel_key(conn_info.symbol))
         if group:
             group.connections.discard(websocket)
+            logger.info(f"Removed connection {websocket.client.host}:{websocket.client.port} from group {group.symbol}")
 
 
     async def _start_redis_subscription(self, group: SubscriptionGroup):
         pubsub = self.redis_client.pubsub()
         await pubsub.subscribe(group.channel)
         group.redis_subscription = pubsub
-        # --- MODIFIED: Pass the pubsub object directly to the handler ---
         group.message_task = asyncio.create_task(self._handle_redis_messages(group, pubsub))
         logger.info(f"Redis subscription task created for channel: {group.channel}")
 
     async def _handle_redis_messages(self, group: SubscriptionGroup, pubsub: aioredis.client.PubSub):
-        """
-        Listens for raw ticks and dispatches them for processing.
-        --- MODIFIED: Added crucial logging for diagnostics. ---
-        """
+        """Listens for raw ticks and dispatches them for processing."""
         logger.info(f"STARTING Redis message listener for channel: {group.channel}")
         try:
             async for message in pubsub.listen():
-                # This log is essential to confirm Redis messages are being received at all
                 logger.debug(f"Received raw message from Redis on channel {group.channel}: {message}")
                 if message['type'] == 'message':
                     tick_data = json.loads(message['data'])
@@ -185,10 +181,8 @@ class ConnectionManager:
         except asyncio.CancelledError:
              logger.warning(f"Redis message listener for {group.channel} was cancelled.")
         except Exception as e:
-            # This will catch errors during connection or message processing
             logger.error(f"FATAL: Redis message listener for {group.channel} failed: {e}", exc_info=True)
         finally:
-            # This log will show if the listener loop ever exits for any reason
             logger.warning(f"STOPPED Redis message listener for channel: {group.channel}")
 
     async def _process_tick_for_group(self, group: SubscriptionGroup, tick_data: dict):
@@ -202,9 +196,6 @@ class ConnectionManager:
                 completed_bar = resampler.add_bar(tick_data)
                 current_bar = resampler.current_bar
                 
-                # ========================= FIX START =========================
-                # Determine the correct data type based on the resampler instance.
-                # This ensures that tick data is keyed correctly for tick-based clients.
                 if isinstance(resampler, TickBarResampler):
                     data_type_key = schemas.DataType.TICK
                 else:
@@ -214,7 +205,6 @@ class ConnectionManager:
                     "completed_bar": completed_bar.model_dump() if completed_bar else None,
                     "current_bar": current_bar.model_dump() if current_bar else None
                 }
-                # ========================== FIX END ==========================
 
                 if resampler_key in group.heikin_ashi_calculators:
                     ha_calc = group.heikin_ashi_calculators[resampler_key]
@@ -236,7 +226,6 @@ class ConnectionManager:
                     }
             except Exception as e:
                 logger.error(f"Error processing tick in resampler {resampler_key}: {e}", exc_info=True)
-                # Continue to next resampler
                 continue
 
 
@@ -245,16 +234,18 @@ class ConnectionManager:
             conn_info = self.connections.get(websocket)
             if not conn_info: continue
             
-            # This lookup will now succeed for tick-based connections
             payload_key = (conn_info.data_type, conn_info.interval, conn_info.timezone)
             if payload_key in payloads:
                 tasks.append(websocket.send_json(payloads[payload_key]))
         
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
-            for result in results:
+            for i, result in enumerate(results):
                 if isinstance(result, Exception):
-                    logger.error(f"Error sending data to client: {result}", exc_info=False)
+                    if isinstance(result, (WebSocketDisconnect, ConnectionClosed)):
+                         logger.warning(f"Failed to send update to a client, connection already closed.")
+                    else:
+                         logger.error(f"Error sending data to client: {result}", exc_info=False)
 
 
     async def _cleanup_loop(self):
