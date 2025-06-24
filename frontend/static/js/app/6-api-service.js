@@ -3,7 +3,7 @@ import { getHistoricalDataUrl, getHistoricalDataChunkUrl, getHeikinAshiDataUrl, 
 import { state, constants } from './2-state.js';
 import * as elements from './1-dom-elements.js';
 import { showToast } from './4-ui-helpers.js';
-import { connectToLiveDataFeed, connectToLiveHeikinAshiData, disconnectFromAllLiveFeeds } from './9-websocket-service.js';
+import { connectToLiveDataFeed, connectToLiveHeikinAshiData, disconnectFromAllLiveFeeds, processMessageBuffer } from './9-websocket-service.js';
 import { applyAutoscaling } from './13-drawing-toolbar-listeners.js';
 
 // NEW: Function to get the URL for the new tick endpoint
@@ -221,6 +221,7 @@ export async function loadChartData() {
     state.resetAllData();
     disconnectFromAllLiveFeeds();
 
+    state.isLoadingHistoricalData = true; // Set flag to true
     elements.loadingIndicator.style.display = 'flex';
     
     try {
@@ -272,6 +273,8 @@ export async function loadChartData() {
         console.error('Failed to fetch initial chart data:', error);
         showToast(`Error: ${error.message}`, 'error');
     } finally {
+        state.isLoadingHistoricalData = false;
+        processMessageBuffer();
         elements.loadingIndicator.style.display = 'none';
         state.currentlyFetching = false;
         applyAutoscaling();

@@ -14,6 +14,8 @@ export const state = {
     volumeSeries: null,
 
     // Session and UI state
+    isLoadingHistoricalData: false,
+    websocketMessageBuffer: [],
     sessionToken: null,
     heartbeatIntervalId: null,
     showOHLCLegend: true,
