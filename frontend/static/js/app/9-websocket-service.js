@@ -1,5 +1,4 @@
-///
-// frontend/static/js/app/9-websocket-service.js
+// chaitanyamurarka/trading_platform_v7/trading_platform_v7-e2d358352a61cb7a1309edf91f97d1e2f22f6d7b/frontend/static/js/app/9-websocket-service.js
 import { state } from './2-state.js';
 import * as elements from './1-dom-elements.js';
 import { showToast } from './4-ui-helpers.js';
@@ -46,18 +45,27 @@ function handleRegularLiveData(data) {
     if (Array.isArray(data)) { // Handle backfill data
         if (data.length === 0) return;
         console.log(`Received backfill data with ${data.length} bars.`);
+        
+        // --- FIX START: Use the correct state array based on the current candle type ---
+        const targetOhlcArray = state.getCurrentChartData();
+        const targetVolumeArray = state.getCurrentVolumeData();
+        // --- FIX END ---
+
         const formattedBackfillBars = data.map(c => ({ time: c.unix_timestamp, open: c.open, high: c.high, low: c.low, close: c.close }));
         const formattedVolumeBars = data.map(c => ({ time: c.unix_timestamp, value: c.volume, color: c.close >= c.open ? elements.volUpColorInput.value + '80' : elements.volDownColorInput.value + '80' }));
-        const lastHistoricalTime = state.allChartData.length > 0 ? state.allChartData[state.allChartData.length - 1].time : 0;
+        
+        const lastHistoricalTime = targetOhlcArray.length > 0 ? targetOhlcArray[targetOhlcArray.length - 1].time : 0;
         
         const newOhlcBars = formattedBackfillBars.filter(d => d.time > lastHistoricalTime);
         const newVolumeBars = formattedVolumeBars.filter(d => d.time > lastHistoricalTime);
 
         if (newOhlcBars.length > 0) {
-            state.allChartData.push(...newOhlcBars);
-            state.allVolumeData.push(...newVolumeBars);
-            state.mainSeries.setData(state.allChartData);
-            state.volumeSeries.setData(state.allVolumeData);
+            // --- FIX START: Push to and set data from the correct target array ---
+            targetOhlcArray.push(...newOhlcBars);
+            targetVolumeArray.push(...newVolumeBars);
+            state.mainSeries.setData(targetOhlcArray);
+            state.volumeSeries.setData(targetVolumeArray);
+            // --- FIX END ---
         }
     } else { // Handle live update for both regular and tick-based charts
         handleLiveUpdate(data);
@@ -169,4 +177,3 @@ export function disconnectFromAllLiveFeeds() {
         haLiveDataSocket = null;
     }
 }
-///
