@@ -3,7 +3,7 @@
 import logging
 import json
 import base64
-import time  # Added for timing
+import time
 from datetime import datetime, timezone as dt_timezone
 from typing import List, Optional, Union
 from fastapi import HTTPException
@@ -42,12 +42,10 @@ def _query_and_process_influx_data(flux_query: str, timezone_str: str) -> List[s
     except Exception:
         target_tz = ZoneInfo("UTC")
 
-    # Start timing InfluxDB query
     start_time = time.time()
     tables = query_api.query(query=flux_query)
     query_time = time.time() - start_time
     
-    # Start timing data processing
     process_start = time.time()
     candles = []
     record_count = 0
@@ -57,7 +55,7 @@ def _query_and_process_influx_data(flux_query: str, timezone_str: str) -> List[s
             record_count += 1
             utc_dt = record.get_time()
             local_dt = utc_dt.astimezone(target_tz)
-            # Create a "fake" UTC datetime to get the correct UNIX timestamp for the frontend library
+            
             fake_utc_dt = datetime(
                 local_dt.year, local_dt.month, local_dt.day,
                 local_dt.hour, local_dt.minute, local_dt.second,
@@ -66,6 +64,7 @@ def _query_and_process_influx_data(flux_query: str, timezone_str: str) -> List[s
             )
             unix_timestamp_for_chart = fake_utc_dt.timestamp()
 
+            ## FIX: Changed back from .get('field') to ['field'] for FluxRecord objects.
             candles.append(schemas.Candle(
                 timestamp=utc_dt,
                 open=record['open'],
@@ -79,7 +78,6 @@ def _query_and_process_influx_data(flux_query: str, timezone_str: str) -> List[s
     process_time = time.time() - process_start
     total_time = time.time() - start_time
     
-    # Log timing information
     logging.info(f"InfluxDB Query Performance: Query execution: {query_time:.3f}s, Data processing: {process_time:.3f}s, Total: {total_time:.3f}s, Records: {record_count}")
     
     return candles
@@ -90,20 +88,19 @@ def _calculate_heikin_ashi(regular_candles: List[schemas.Candle]) -> List[schema
         return []
 
     ha_candles = []
-    prev_ha_open = (regular_candles[0].open + regular_candles[0].close) / 2
-    prev_ha_close = (regular_candles[0].open + regular_candles[0].high + regular_candles[0].low + regular_candles[0].close) / 4
+    # Initial HA candle calculation
+    first_candle = regular_candles[0]
+    ha_close = (first_candle.open + first_candle.high + first_candle.low + first_candle.close) / 4
+    ha_open = (first_candle.open + first_candle.close) / 2
+    ha_high = max(first_candle.high, ha_open, ha_close)
+    ha_low = min(first_candle.low, ha_open, ha_close)
 
-    # First candle
     ha_candles.append(schemas.HeikinAshiCandle(
-        open=prev_ha_open,
-        high=max(regular_candles[0].high, prev_ha_open, prev_ha_close),
-        low=min(regular_candles[0].low, prev_ha_open, prev_ha_close),
-        close=prev_ha_close,
-        volume=regular_candles[0].volume,
-        unix_timestamp=regular_candles[0].unix_timestamp,
-        regular_open=regular_candles[0].open,
-        regular_close=regular_candles[0].close
+        open=ha_open, high=ha_high, low=ha_low, close=ha_close,
+        volume=first_candle.volume, unix_timestamp=first_candle.unix_timestamp,
+        regular_open=first_candle.open, regular_close=first_candle.close
     ))
+    prev_ha_open, prev_ha_close = ha_open, ha_close
 
     # Subsequent candles
     for candle in regular_candles[1:]:
@@ -124,130 +121,206 @@ def _calculate_heikin_ashi(regular_candles: List[schemas.Candle]) -> List[schema
 # --- Main Service Functions ---
 
 def get_historical_data(
-    session_token: str,
-    exchange: str,
-    token: str,
-    interval_val: str,
-    start_time: datetime,
-    end_time: datetime,
-    timezone: str,
-    data_type: schemas.DataType
+    session_token: str, exchange: str, token: str, interval_val: str,
+    start_time: datetime, end_time: datetime, timezone: str, data_type: schemas.DataType
 ) -> Union[schemas.HistoricalDataResponse, schemas.TickDataResponse, schemas.HeikinAshiDataResponse]:
-    """
-    Unified function to get all types of historical data.
-    """
-    if data_type == schemas.DataType.TICK:
-        return _get_initial_tick_data(session_token=session_token, exchange=exchange, token=token, interval_val=interval_val, start_time=start_time, end_time=end_time, timezone=timezone)
-
-    # For Regular and Heikin Ashi, we use offset-based pagination
-    regular_data = _get_offset_based_data(session_token=session_token, exchange=exchange, token=token, interval_val=interval_val, start_time=start_time, end_time=end_time, timezone=timezone)
-
-    if data_type == schemas.DataType.REGULAR:
-        return regular_data
+    """Unified function to get all types of historical data."""
+    
+    ## CHANGE: Route REGULAR data to the new cursor-based method for efficiency.
+    if data_type in [schemas.DataType.TICK, schemas.DataType.REGULAR]:
+        return _get_initial_cursor_based_data(
+            token=token, interval_val=interval_val, start_time=start_time,
+            end_time=end_time, timezone=timezone, data_type=data_type
+        )
 
     if data_type == schemas.DataType.HEIKIN_ASHI:
-        return _get_heikin_ashi_from_regular(regular_data, session_token=session_token, exchange=exchange, token=token, interval_val=interval_val, start_time=start_time, end_time=end_time, timezone=timezone)
+        return _get_initial_heikin_ashi_data(
+            session_token=session_token, exchange=exchange, token=token, interval_val=interval_val,
+            start_time=start_time, end_time=end_time, timezone=timezone
+        )
 
     raise HTTPException(status_code=400, detail=f"Unsupported data_type: {data_type}")
 
 
 def get_historical_chunk(
     request_id: str,
-    offset: Optional[int], # Can be None for cursor-based pagination
+    offset: Optional[int], # ## NOTE: Offset is now only used for Heikin Ashi.
     limit: int,
     data_type: schemas.DataType
 ) -> Union[schemas.HistoricalDataChunkResponse, schemas.TickDataChunkResponse, schemas.HeikinAshiDataChunkResponse]:
-    """
-    Unified function to get chunks for all data types.
-    """
-    if data_type == schemas.DataType.TICK:
-        # For tick data, 'request_id' is a cursor and 'offset' is ignored.
-        return _get_tick_data_chunk(request_id, limit)
+    """Unified function to get chunks for all data types."""
 
-    if offset is None:
-        raise HTTPException(status_code=400, detail="Offset is required for this data type.")
-
-    if data_type == schemas.DataType.REGULAR:
-        return _get_offset_based_chunk(request_id, offset, limit)
+    ## CHANGE: Route REGULAR data to the cursor-based chunk method.
+    if data_type in [schemas.DataType.TICK, schemas.DataType.REGULAR]:
+        # For tick/regular data, 'request_id' is a cursor and 'offset' is ignored.
+        return _get_cursor_based_chunk(request_id, limit)
 
     if data_type == schemas.DataType.HEIKIN_ASHI:
+        if offset is None:
+            raise HTTPException(status_code=400, detail="Offset is required for Heikin Ashi data type.")
         return _get_heikin_ashi_chunk(request_id, offset, limit)
 
     raise HTTPException(status_code=400, detail=f"Unsupported data_type: {data_type}")
 
-
 # --- Internal Logic for Specific Data Types ---
 
-def _get_offset_based_data(session_token: str, exchange: str, token: str, interval_val: str, start_time: datetime, end_time: datetime, timezone: str) -> schemas.HistoricalDataResponse:
-    """Handles fetching and caching for data that uses offset-based pagination."""
-    request_id = build_ohlc_cache_key(candle_type="regular", session_token=session_token, exchange=exchange, token=token, interval=interval_val, start_time=start_time, end_time=end_time, timezone=timezone)
-
+## CHANGE: New function to fetch the FULL dataset, used ONLY for Heikin Ashi calculation.
+def _fetch_and_cache_full_ohlc(
+    request_id: str, exchange: str, token: str, interval_val: str,
+    start_time: datetime, end_time: datetime, timezone: str
+) -> List[schemas.Candle]:
+    """
+    Fetches the complete OHLC dataset for a given range and caches it.
+    This is an expensive operation and should only be used when the full dataset is
+    required, such as for calculating Heikin Ashi candles.
+    """
     full_data = get_cached_ohlc_data(request_id)
-    if not full_data:
-        logging.info(f"Cache MISS for REGULAR data: {request_id}. Querying InfluxDB.")
-        start_utc = start_time.astimezone(dt_timezone.utc)
-        end_utc = end_time.astimezone(dt_timezone.utc)
+    if full_data:
+        logging.info(f"Cache HIT for FULL OHLC data: {request_id}")
+        return full_data
 
-        flux_query = f"""
-            from(bucket: "{settings.INFLUX_BUCKET}")
-              |> range(start: {start_utc.isoformat()}, stop: {end_utc.isoformat()})
-              |> filter(fn: (r) => r._measurement == "ohlc_{interval_val}")
-              |> filter(fn: (r) => r.symbol == "{token}")
-              |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
-              |> sort(columns: ["_time"])
-        """
-        
-        # Time the entire InfluxDB operation
-        fetch_start = time.time()
-        full_data = _query_and_process_influx_data(flux_query, timezone)
-        fetch_time = time.time() - fetch_start
-        
-        logging.info(f"InfluxDB fetch completed in {fetch_time:.3f}s for {len(full_data)} records")
+    logging.info(f"Cache MISS for FULL OHLC data: {request_id}. Querying InfluxDB.")
+    start_utc = start_time.astimezone(dt_timezone.utc)
+    end_utc = end_time.astimezone(dt_timezone.utc)
 
-        if not full_data:
-             return schemas.HistoricalDataResponse(candles=[], total_available=0, is_partial=False, message="No data available for this range.", request_id=None, offset=None)
+    # This query scans the entire time range.
+    flux_query = f"""
+        from(bucket: "{settings.INFLUX_BUCKET}")
+          |> range(start: {start_utc.isoformat()}, stop: {end_utc.isoformat()})
+          |> filter(fn: (r) => r._measurement == "ohlc_{interval_val}")
+          |> filter(fn: (r) => r.symbol == "{token}")
+          |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+          |> sort(columns: ["_time"])
+    """
+    
+    fetch_start = time.time()
+    full_data = _query_and_process_influx_data(flux_query, timezone)
+    fetch_time = time.time() - fetch_start
+    logging.info(f"InfluxDB full fetch completed in {fetch_time:.3f}s for {len(full_data)} records")
 
+    if full_data:
         set_cached_ohlc_data(request_id, full_data, expiration=CACHE_EXPIRATION_SECONDS)
-        logging.info(f"Cache SET for REGULAR data: {request_id} with {len(full_data)} records.")
+        logging.info(f"Cache SET for FULL OHLC data: {request_id} with {len(full_data)} records.")
 
-    total_available = len(full_data)
-    initial_offset = max(0, total_available - INITIAL_FETCH_LIMIT)
-    candles_to_send = full_data[initial_offset:]
+    return full_data
 
-    return schemas.HistoricalDataResponse(
-        request_id=request_id,
+
+## CHANGE: Renamed and generalized from _get_initial_tick_data. Handles both TICK and REGULAR.
+def _get_initial_cursor_based_data(
+    token: str, interval_val: str, start_time: datetime, end_time: datetime, timezone: str, data_type: schemas.DataType
+) -> schemas.TickDataResponse:
+    """
+    Handles fetching the initial, most recent page of data for cursor-based pagination.
+    This is highly efficient as it uses `limit()` in the database.
+    """
+    start_utc = start_time.astimezone(dt_timezone.utc)
+    end_utc = end_time.astimezone(dt_timezone.utc)
+    measurement = f"ohlc_{interval_val}"
+
+    ## CHANGE: The query is now optimized to only get the last N records.
+    flux_query = f"""
+        from(bucket: "{settings.INFLUX_BUCKET}")
+          |> range(start: {start_utc.isoformat()}, stop: {end_utc.isoformat()})
+          |> filter(fn: (r) => r._measurement == "{measurement}" and r.symbol == "{token}")
+          |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+          |> sort(columns: ["_time"], desc: true)
+          |> limit(n: {INITIAL_FETCH_LIMIT})
+          |> sort(columns: ["_time"])
+    """
+    
+    candles_to_send = _query_and_process_influx_data(flux_query, timezone)
+
+    if not candles_to_send:
+        return schemas.TickDataResponse(candles=[], is_partial=False, message="No data available for this range.", request_id=None)
+
+    next_cursor, is_partial = None, False
+    if len(candles_to_send) == INITIAL_FETCH_LIMIT:
+        earliest_time = candles_to_send[0].timestamp
+        if earliest_time > start_utc:
+            is_partial = True
+            cursor_data = {
+                "token": token, "interval": interval_val,
+                "start_time_iso": start_utc.isoformat(), "cursor_iso": earliest_time.isoformat(),
+                "timezone": timezone
+            }
+            next_cursor = base64.urlsafe_b64encode(json.dumps(cursor_data).encode()).decode()
+
+    # We can reuse the TickDataResponse schema for any cursor-based data.
+    return schemas.TickDataResponse(
+        request_id=next_cursor,
         candles=candles_to_send,
-        offset=initial_offset,
-        total_available=total_available,
-        is_partial=(total_available > len(candles_to_send)),
-        message=f"Initial data loaded. Displaying last {len(candles_to_send)} of {total_available} candles."
+        is_partial=is_partial,
+        message=f"Loaded last {len(candles_to_send)} {data_type.value} bars."
     )
 
-def _get_offset_based_chunk(request_id: str, offset: int, limit: int) -> schemas.HistoricalDataChunkResponse:
-    full_data = get_cached_ohlc_data(request_id)
-    if not full_data:
-        raise HTTPException(status_code=404, detail="Data for this request not found or expired.")
+## CHANGE: Renamed and generalized from _get_tick_data_chunk.
+def _get_cursor_based_chunk(request_id: str, limit: int) -> schemas.TickDataChunkResponse:
+    """Handles fetching subsequent pages for cursor-based data (Tick and Regular)."""
+    try:
+        cursor_data = json.loads(base64.urlsafe_b64decode(request_id).decode())
+        original_start_utc = datetime.fromisoformat(cursor_data['start_time_iso'])
+        # The new end time for the query is the timestamp from the cursor.
+        end_utc = datetime.fromisoformat(cursor_data['cursor_iso'])
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid cursor.")
 
-    total = len(full_data)
-    chunk = full_data[offset : offset + limit] if offset < total else []
+    measurement = f"ohlc_{cursor_data['interval']}"
+    flux_query = f"""
+        from(bucket: "{settings.INFLUX_BUCKET}")
+          |> range(start: {original_start_utc.isoformat()}, stop: {end_utc.isoformat()})
+          |> filter(fn: (r) => r._measurement == "{measurement}" and r.symbol == "{cursor_data['token']}")
+          |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+          |> sort(columns: ["_time"], desc: true)
+          |> limit(n: {limit})
+          |> sort(columns: ["_time"])
+    """
+    
+    candles_to_send = _query_and_process_influx_data(flux_query, cursor_data['timezone'])
 
-    return schemas.HistoricalDataChunkResponse(candles=chunk, offset=offset, limit=limit, total_available=total)
+    if not candles_to_send:
+        return schemas.TickDataChunkResponse(candles=[], is_partial=False, request_id=None)
+
+    next_cursor, is_partial = None, False
+    if len(candles_to_send) == limit:
+        earliest_time = candles_to_send[0].timestamp
+        if earliest_time > original_start_utc:
+            is_partial = True
+            new_cursor_data = {**cursor_data, "cursor_iso": earliest_time.isoformat()}
+            next_cursor = base64.urlsafe_b64encode(json.dumps(new_cursor_data).encode()).decode()
+    
+    # We can reuse the TickDataChunkResponse schema.
+    return schemas.TickDataChunkResponse(request_id=next_cursor, candles=candles_to_send, is_partial=is_partial)
 
 
-def _get_heikin_ashi_from_regular(
-    regular_response: schemas.HistoricalDataResponse, session_token: str, exchange: str, token: str, interval_val: str, start_time: datetime, end_time: datetime, timezone: str
+## CHANGE: This is now the initial fetch function specifically for Heikin Ashi.
+def _get_initial_heikin_ashi_data(
+    session_token: str, exchange: str, token: str, interval_val: str, start_time: datetime, end_time: datetime, timezone: str
 ) -> schemas.HeikinAshiDataResponse:
-    """Calculates and caches Heikin Ashi data based on a regular data response."""
-    ha_request_id = build_heikin_ashi_cache_key(session_token=session_token, exchange=exchange, token=token, interval=interval_val, start_time=start_time, end_time=end_time, timezone=timezone)
+    """Calculates and caches Heikin Ashi data, then returns the last N records."""
+    
+    # Build a cache key for the full underlying regular OHLC data.
+    ohlc_request_id = build_ohlc_cache_key(
+        candle_type="regular_full", session_token=session_token, exchange=exchange, token=token, 
+        interval=interval_val, start_time=start_time, end_time=end_time, timezone=timezone
+    )
+    # Build a cache key for the calculated Heikin Ashi data.
+    ha_request_id = build_heikin_ashi_cache_key(
+        session_token=session_token, exchange=exchange, token=token, interval=interval_val, 
+        start_time=start_time, end_time=end_time, timezone=timezone
+    )
 
     full_ha_data = get_cached_heikin_ashi_data(ha_request_id)
     if not full_ha_data:
-        logging.info(f"Cache MISS for HEIKIN ASHI data: {ha_request_id}.")
-        # Need the *full* set of regular candles to calculate HA correctly
-        full_regular_data = get_cached_ohlc_data(regular_response.request_id)
+        logging.info(f"Cache MISS for HEIKIN ASHI data: {ha_request_id}. Calculating...")
+        
+        # This is the key change: we call the function that performs the full, expensive scan.
+        full_regular_data = _fetch_and_cache_full_ohlc(
+            request_id=ohlc_request_id, exchange=exchange, token=token, interval_val=interval_val,
+            start_time=start_time, end_time=end_time, timezone=timezone
+        )
+
         if not full_regular_data:
-             # This should not happen if we just fetched it, but as a safeguard:
-            full_regular_data = regular_response.candles
+            return schemas.HeikinAshiDataResponse(candles=[], total_available=0, is_partial=False, message="No underlying data available to calculate Heikin Ashi.", request_id=None, offset=None)
 
         full_ha_data = _calculate_heikin_ashi(full_regular_data)
         set_cached_heikin_ashi_data(ha_request_id, full_ha_data, expiration=CACHE_EXPIRATION_SECONDS)
@@ -266,98 +339,17 @@ def _get_heikin_ashi_from_regular(
         message=f"Heikin Ashi data loaded. Displaying last {len(candles_to_send)} of {total_available} candles."
     )
 
+## CHANGE: This function now exclusively serves chunks for Heikin Ashi from the cache.
 def _get_heikin_ashi_chunk(request_id: str, offset: int, limit: int) -> schemas.HeikinAshiDataChunkResponse:
+    """Fetches a chunk of Heikin Ashi data from the cache using offset and limit."""
     full_ha_data = get_cached_heikin_ashi_data(request_id)
     if not full_ha_data:
         raise HTTPException(status_code=404, detail="Heikin Ashi data for this request not found or has expired.")
 
     total = len(full_ha_data)
-    chunk = full_ha_data[offset : offset + limit] if offset < total else []
+    # Ensure offset is within bounds
+    start_index = max(0, offset)
+    end_index = min(start_index + limit, total)
+    chunk = full_ha_data[start_index:end_index]
 
     return schemas.HeikinAshiDataChunkResponse(candles=chunk, offset=offset, limit=limit, total_available=total)
-
-
-def _get_initial_tick_data(session_token: str, exchange: str, token: str, interval_val: str, start_time: datetime, end_time: datetime, timezone: str) -> schemas.TickDataResponse:
-    """Handles fetching the initial page for cursor-based tick data."""
-    start_utc = start_time.astimezone(dt_timezone.utc)
-    end_utc = end_time.astimezone(dt_timezone.utc)
-    measurement = f"ohlc_{interval_val}"
-
-    flux_query = f"""
-        from(bucket: "{settings.INFLUX_BUCKET}")
-          |> range(start: {start_utc.isoformat()}, stop: {end_utc.isoformat()})
-          |> filter(fn: (r) => r._measurement == "{measurement}" and r.symbol == "{token}")
-          |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
-          |> sort(columns: ["_time"], desc: true)
-          |> limit(n: {INITIAL_FETCH_LIMIT})
-          |> sort(columns: ["_time"])
-    """
-    
-    # Time the tick data fetch
-    fetch_start = time.time()
-    candles_to_send = _query_and_process_influx_data(flux_query, timezone)
-    fetch_time = time.time() - fetch_start
-    
-    logging.info(f"InfluxDB tick data fetch completed in {fetch_time:.3f}s for {len(candles_to_send)} records")
-
-    if not candles_to_send:
-        return schemas.TickDataResponse(candles=[], is_partial=False, message="No data available for this range.", request_id=None)
-
-    next_cursor, is_partial = None, False
-    if len(candles_to_send) == INITIAL_FETCH_LIMIT:
-        earliest_time = candles_to_send[0].timestamp
-        if earliest_time > start_utc:
-            is_partial = True
-            cursor_data = {
-                "token": token, "interval": interval_val,
-                "start_time_iso": start_utc.isoformat(), "cursor_iso": earliest_time.isoformat(),
-                "timezone": timezone
-            }
-            next_cursor = base64.urlsafe_b64encode(json.dumps(cursor_data).encode()).decode()
-
-    return schemas.TickDataResponse(
-        request_id=next_cursor,
-        candles=candles_to_send,
-        is_partial=is_partial,
-        message=f"Loaded last {len(candles_to_send)} tick bars."
-    )
-
-def _get_tick_data_chunk(request_id: str, limit: int) -> schemas.TickDataChunkResponse:
-    """Handles fetching subsequent pages for cursor-based tick data."""
-    try:
-        cursor_data = json.loads(base64.urlsafe_b64decode(request_id).decode())
-        original_start_utc = datetime.fromisoformat(cursor_data['start_time_iso'])
-        end_utc = datetime.fromisoformat(cursor_data['cursor_iso'])
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid cursor.")
-
-    measurement = f"ohlc_{cursor_data['interval']}"
-    flux_query = f"""
-        from(bucket: "{settings.INFLUX_BUCKET}")
-          |> range(start: {original_start_utc.isoformat()}, stop: {end_utc.isoformat()})
-          |> filter(fn: (r) => r._measurement == "{measurement}" and r.symbol == "{cursor_data['token']}")
-          |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
-          |> sort(columns: ["_time"], desc: true)
-          |> limit(n: {limit})
-          |> sort(columns: ["_time"])
-    """
-    
-    # Time the chunk fetch
-    fetch_start = time.time()
-    candles_to_send = _query_and_process_influx_data(flux_query, cursor_data['timezone'])
-    fetch_time = time.time() - fetch_start
-    
-    logging.info(f"InfluxDB tick chunk fetch completed in {fetch_time:.3f}s for {len(candles_to_send)} records")
-
-    if not candles_to_send:
-        return schemas.TickDataChunkResponse(candles=[], is_partial=False, request_id=None)
-
-    next_cursor, is_partial = None, False
-    if len(candles_to_send) == limit:
-        earliest_time = candles_to_send[0].timestamp
-        if earliest_time > original_start_utc:
-            is_partial = True
-            new_cursor_data = {**cursor_data, "cursor_iso": earliest_time.isoformat()}
-            next_cursor = base64.urlsafe_b64encode(json.dumps(new_cursor_data).encode()).decode()
-
-    return schemas.TickDataChunkResponse(request_id=next_cursor, candles=candles_to_send, is_partial=is_partial)
