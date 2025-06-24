@@ -116,42 +116,42 @@ class ConnectionManager:
 
     async def add_connection(self, websocket: WebSocket, symbol: str, interval: str, timezone: str, data_type: schemas.DataType):
         """
-        Adds a new WebSocket connection, sends backfill data, and sets up live processing.
-        --- MODIFIED: Starts the live listener before sending backfill to prevent race conditions. ---
+        Adds a new WebSocket connection, sends backfill data, and then subscribes the connection to the live feed.
+        --- MODIFIED: Sends backfill BEFORE adding the connection to the live group to prevent race conditions. ---
         """
         conn_info = ConnectionInfo(websocket, symbol, interval, timezone, data_type)
         self.connections[websocket] = conn_info
         
         channel_key = self._get_channel_key(symbol)
         
-        # --- FIX: Ensure subscription group and listener are running BEFORE backfill ---
+        # Ensure the subscription group and its Redis listener exist.
         if channel_key not in self.subscription_groups:
-            # Create a new group if it's the first connection for this symbol
             group = SubscriptionGroup(channel=channel_key, symbol=symbol)
             self.subscription_groups[channel_key] = group
-            # Start the persistent Redis listener task for this new group
             await self._start_redis_subscription(group)
         
         group = self.subscription_groups[channel_key]
-        group.connections.add(websocket)
-        
         resampler_key = (interval, timezone)
         
-        # Create a new resampler for this specific interval/timezone if it doesn't exist
+        # Create necessary resamplers if they don't exist for the group.
         if resampler_key not in group.resamplers:
-            resampler = TickBarResampler(interval, timezone) if 'tick' in interval else BarResampler(interval, timezone)
-            group.resamplers[resampler_key] = resampler
-            logger.info(f"Created new {type(resampler).__name__} for group {symbol}, key: {resampler_key}")
+            resampler_class = TickBarResampler if 'tick' in interval else BarResampler
+            group.resamplers[resampler_key] = resampler_class(interval, timezone)
+            logger.info(f"Created new {resampler_class.__name__} for group {symbol}, key: {resampler_key}")
 
-        # Create a Heikin Ashi calculator if requested and not already present
         if data_type == schemas.DataType.HEIKIN_ASHI and resampler_key not in group.heikin_ashi_calculators:
             group.heikin_ashi_calculators[resampler_key] = HeikinAshiLiveCalculator()
             logger.info(f"Created new HeikinAshiLiveCalculator for group {symbol}, key: {resampler_key}")
-            
-        # Now that all live listeners and resamplers are confirmed to be in place, send historical data.
-        await self._send_backfill_data(websocket, conn_info)
-        # --- END FIX ---
 
+        # --- FIX: Send historical backfill data FIRST. ---
+        # This ensures the client has a stable historical state before receiving any live updates.
+        await self._send_backfill_data(websocket, conn_info)
+
+        # --- FIX: Now, add the connection to the live group. ---
+        # The client will now start receiving live tick updates. Any ticks missed during backfill
+        # are an acceptable trade-off for a guaranteed-correct initial chart load.
+        group.connections.add(websocket)
+        logger.info(f"Connection {websocket.client.host}:{websocket.client.port} for {symbol}/{interval} is now live.")
 
     async def remove_connection(self, websocket: WebSocket):
         if websocket not in self.connections: return

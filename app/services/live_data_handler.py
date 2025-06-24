@@ -9,6 +9,8 @@ from .. import schemas
 # --- Get Logger ---
 logger = logging.getLogger(__name__)
 
+
+
 class TickBarResampler:
     """
     Aggregates raw ticks into bars of a specified tick-count.
@@ -33,8 +35,8 @@ class TickBarResampler:
 
     def add_bar(self, tick_data: Dict) -> Optional[schemas.Candle]:
         """
-        Processes a single raw tick. If a bar is completed, it returns the completed bar
-        and immediately starts the next bar, ensuring there is always a current_bar.
+        Processes a single raw tick. If a bar is completed, it returns the completed bar.
+        --- MODIFIED: Logic corrected to avoid 1-tick lag. ---
         """
         if not all(k in tick_data for k in ['price', 'volume', 'timestamp']):
             logger.warning(f"Malformed tick data received: {tick_data}")
@@ -56,41 +58,31 @@ class TickBarResampler:
         # Ensure timestamps are always unique and increasing
         if self.last_completed_bar_timestamp is not None and fake_unix_timestamp <= self.last_completed_bar_timestamp:
             fake_unix_timestamp = self.last_completed_bar_timestamp + 0.000001
-        
-        # --- NEW, CORRECTED LOGIC ---
 
-        # If this is the very first tick the resampler has ever seen, create a bar and exit.
+        # If there's no bar, start a new one
         if self.current_bar is None:
-            self.current_bar = schemas.Candle(open=price, high=price, low=price, close=price, volume=volume, unix_timestamp=fake_unix_timestamp)
-            self.tick_count = 1
-            return None
-
-        # If we are here, a bar is already in progress. Check if it's full.
+            self.current_bar = schemas.Candle(open=price, high=price, low=price, close=price, volume=0, unix_timestamp=fake_unix_timestamp)
+        
+        # Add the current tick's data to the bar
+        self.current_bar.high = max(self.current_bar.high, price)
+        self.current_bar.low = min(self.current_bar.low, price)
+        self.current_bar.close = price
+        self.current_bar.volume += volume
+        self.tick_count += 1
+        
+        # Check if the bar is now complete
         if self.tick_count >= self.ticks_per_bar:
-            # The bar was filled by the PREVIOUS tick. This new tick starts the NEXT bar.
             completed_bar = self.current_bar
             self.last_completed_bar_timestamp = completed_bar.unix_timestamp
             
-            # Start the new bar with the current tick's data
-            self.current_bar = schemas.Candle(open=price, high=price, low=price, close=price, volume=volume, unix_timestamp=fake_unix_timestamp)
-            self.tick_count = 1
+            # Reset for the next bar
+            self.current_bar = None
+            self.tick_count = 0
             
-            # Return the bar we just completed
             return completed_bar
-        else:
-            # The current bar is not full yet. Add the current tick's data to it.
-            self.current_bar.high = max(self.current_bar.high, price)
-            self.current_bar.low = min(self.current_bar.low, price)
-            self.current_bar.close = price
-            self.current_bar.volume += volume
-            # =================================================================
-            # --- FIX: The line below was incorrectly updating the timestamp of the in-progress bar ---
-            # self.current_bar.unix_timestamp = fake_unix_timestamp  <-- REMOVE THIS LINE
-            # =================================================================
-            self.tick_count += 1
-            
-            # The bar is still in-progress, return nothing.
-            return None
+        
+        # Bar is still in-progress, return nothing
+        return None
 
 # The rest of the file remains unchanged...
 # (BarResampler class and resample_ticks_to_bars function)
