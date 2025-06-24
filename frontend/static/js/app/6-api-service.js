@@ -241,7 +241,7 @@ export async function loadChartData() {
         if (isTickChart) {
             // For ticks, we use the new endpoint structure.
             const url = getTickDataUrl(...args); 
-            responseData = await fetchHistoricalData(url);
+            responseData = await fetchInitialTickData(...args);
         } else if (state.candleType === 'heikin_ashi') {
             responseData = await fetchHeikinAshiData(...args);
         } else {
