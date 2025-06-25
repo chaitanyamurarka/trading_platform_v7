@@ -64,22 +64,20 @@ class Candle(CandleBase):
 
 class HistoricalDataResponse(BaseModel):
     """
-    Defines the structured response for an initial historical data request.
-    It includes the candle data plus metadata for pagination (lazy loading).
+    MODIFIED: Defines the structured response for an initial historical data request
+    based on cursor pagination.
     """
-    request_id: Optional[str] = Field(None, description="A unique ID for this data session, used for fetching subsequent chunks.")
+    request_id: Optional[str] = Field(None, description="A cursor for fetching the next chunk of data, if more is available.")
     candles: List[Candle] = Field(description="The list of OHLC candle data.")
-    offset: Optional[int] = Field(None, description="The starting offset of this chunk within the full dataset.")
-    total_available: int = Field(description="The total number of candles available on the server for the requested range.")
     is_partial: bool = Field(description="True if the returned 'candles' are a subset of the total available.")
     message: str = Field(description="A descriptive message about the result of the data load.")
 
 class HistoricalDataChunkResponse(BaseModel):
-    """Defines the response for a subsequent chunk of historical data."""
+    """MODIFIED: Defines the response for a subsequent chunk of historical data."""
+    request_id: Optional[str] = Field(None, description="The new cursor for the next page of data.")
     candles: List[Candle]
-    offset: int
+    is_partial: bool
     limit: int
-    total_available: int
 
 class SessionInfo(BaseModel):
     """Schema for returning a new session token to the client."""
@@ -104,46 +102,36 @@ class HeikinAshiCandle(BaseModel):
     regular_close: Optional[float] = Field(None, description="Original OHLC close")
 
 class HeikinAshiDataResponse(BaseModel):
-    """Response schema for Heikin Ashi data requests."""
-    request_id: Optional[str] = Field(None, description="Unique ID for pagination")
+    """MODIFIED: Response schema for Heikin Ashi data requests."""
+    request_id: Optional[str] = Field(None, description="Unique ID for pagination (cursor).")
     candles: List[HeikinAshiCandle] = Field(description="List of Heikin Ashi candles")
-    offset: Optional[int] = Field(None, description="Starting offset of this chunk")
-    total_available: int = Field(description="Total candles available")
     is_partial: bool = Field(description="True if this is a subset of total data")
     message: str = Field(description="Descriptive message about the result")
 
 class HeikinAshiDataChunkResponse(BaseModel):
-    """Response schema for Heikin Ashi data chunk requests (pagination)."""
+    """MODIFIED: Response schema for Heikin Ashi data chunk requests (pagination)."""
+    request_id: Optional[str] = Field(None, description="The new cursor for the next page.")
     candles: List[HeikinAshiCandle] = Field(description="List of Heikin Ashi candles for this chunk")
-    offset: int = Field(description="Starting offset of this chunk")
-    limit: int = Field(description="Number of candles requested")
-    total_available: int = Field(description="Total candles available")
+    is_partial: bool
+    limit: int
 
-# --- NEW SCHEMAS FOR TICK PAGINATION ---
+# --- UNIFIED SCHEMAS FOR ALL DATA TYPES (REGULAR, HA, TICK) ---
 
 class TickDataResponse(BaseModel):
     """
-    Defines the structured response for a tick data request, designed for
-    cursor-based pagination. It mirrors the structure of HistoricalDataResponse
-    to minimize frontend changes.
+    CLEANED UP: Defines the structured response for a tick data request, designed for
+    cursor-based pagination.
     """
     request_id: Optional[str] = Field(None, description="A cursor for fetching the next chunk of data.")
     candles: List[Candle]
     is_partial: bool
     message: str
-    # Dummy fields to match the expected structure on the frontend
-    offset: int = 0
-    total_available: int = 0
     
 class TickDataChunkResponse(BaseModel):
     """
-    Defines the response for a subsequent chunk of tick data. Mirrors the
-    structure of HistoricalDataChunkResponse.
+    CLEANED UP: Defines the response for a subsequent chunk of tick data.
     """
     request_id: Optional[str] = Field(None, description="The new cursor for the next page.")
     candles: List[Candle]
     is_partial: bool
-    # Dummy fields
-    offset: int = 0
-    limit: int = 5000
-    total_available: int = 0
+    limit: int

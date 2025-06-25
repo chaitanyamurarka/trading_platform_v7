@@ -43,21 +43,8 @@ async function fetchHistoricalData(url) {
 }
 
 export async function fetchAndPrependRegularCandleChunk() {
+    // REFACTORED to use cursor-based pagination
     if (state.allDataLoaded || state.currentlyFetching || !state.chartRequestId) {
-        return;
-    }
-
-    const nextOffset = Math.max(0, state.chartCurrentOffset - constants.DATA_CHUNK_SIZE);
-
-    if (nextOffset === state.chartCurrentOffset && state.chartCurrentOffset === 0) {
-        state.allDataLoaded = true;
-        return;
-    }
-
-    const limit = state.chartCurrentOffset - nextOffset;
-
-    if (limit <= 0) {
-        state.allDataLoaded = true;
         return;
     }
 
@@ -65,7 +52,8 @@ export async function fetchAndPrependRegularCandleChunk() {
     elements.loadingIndicator.style.display = 'flex';
 
     try {
-        const chunkUrl = getHistoricalDataChunkUrl(state.chartRequestId, nextOffset, limit);
+        // Use the request_id as a cursor. The offset parameter is now ignored.
+        const chunkUrl = getHistoricalDataChunkUrl(state.chartRequestId, 0, constants.DATA_CHUNK_SIZE);
         const chunkData = await fetchHistoricalData(chunkUrl);
 
         if (chunkData && chunkData.candles.length > 0) {
@@ -78,9 +66,11 @@ export async function fetchAndPrependRegularCandleChunk() {
             state.mainSeries.setData(state.allChartData);
             state.volumeSeries.setData(state.allVolumeData);
 
-            state.chartCurrentOffset = chunkData.offset;
+            // Update the cursor (request_id) for the next fetch
+            state.chartRequestId = chunkData.request_id;
 
-            if (state.chartCurrentOffset === 0) {
+            // Use the 'is_partial' flag to determine if we've reached the end
+            if (!chunkData.is_partial || !chunkData.request_id) {
                 state.allDataLoaded = true;
                 showToast('Loaded all available historical data.', 'info');
             } else {
@@ -100,22 +90,8 @@ export async function fetchAndPrependRegularCandleChunk() {
 
 
 export async function fetchAndPrependHeikinAshiChunk() {
-    // CORRECTED LOGIC
+    // REFACTORED to use cursor-based pagination
     if (state.allHeikinAshiDataLoaded || state.currentlyFetching || !state.heikinAshiRequestId) {
-        return;
-    }
-
-    const nextOffset = Math.max(0, state.heikinAshiCurrentOffset - constants.DATA_CHUNK_SIZE);
-    
-    if (nextOffset === state.heikinAshiCurrentOffset && state.heikinAshiCurrentOffset === 0) {
-        state.allHeikinAshiDataLoaded = true;
-        return;
-    }
-    
-    const limit = state.heikinAshiCurrentOffset - nextOffset;
-
-    if (limit <= 0) {
-        state.allHeikinAshiDataLoaded = true;
         return;
     }
 
@@ -123,7 +99,9 @@ export async function fetchAndPrependHeikinAshiChunk() {
     elements.loadingIndicator.style.display = 'flex';
 
     try {
-        const chunkData = await fetchHeikinAshiChunk(state.heikinAshiRequestId, nextOffset, limit);
+        // Use the request_id as a cursor. The offset parameter is now ignored.
+        const chunkData = await fetchHeikinAshiChunk(state.heikinAshiRequestId, 0, constants.DATA_CHUNK_SIZE); 
+        
         if (chunkData && chunkData.candles.length > 0) {
             const chartFormattedData = chunkData.candles.map(c => ({ time: c.unix_timestamp, open: c.open, high: c.high, low: c.low, close: c.close }));
             const volumeFormattedData = chunkData.candles.map(c => ({ time: c.unix_timestamp, value: c.volume || 0, color: c.close >= c.open ? elements.volUpColorInput.value + '80' : elements.volDownColorInput.value + '80' }));
@@ -132,9 +110,12 @@ export async function fetchAndPrependHeikinAshiChunk() {
             state.allHeikinAshiVolumeData = [...volumeFormattedData, ...state.allHeikinAshiVolumeData];
             state.mainSeries.setData(state.allHeikinAshiData);
             state.volumeSeries.setData(state.allHeikinAshiVolumeData);
-            state.heikinAshiCurrentOffset = chunkData.offset;
+            
+            // Update the cursor (request_id) for the next fetch
+            state.heikinAshiRequestId = chunkData.request_id;
 
-            if (state.heikinAshiCurrentOffset === 0) {
+            // Use the 'is_partial' flag to determine if we've reached the end
+            if (!chunkData.is_partial || !chunkData.request_id) {
                 state.allHeikinAshiDataLoaded = true;
                 showToast('Loaded all available Heikin Ashi data.', 'info');
             } else {

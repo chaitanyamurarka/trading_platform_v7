@@ -177,16 +177,19 @@ def get_historical_data(session_token: str, exchange: str, token: str, interval_
         regular_candles, next_cursor_date = _fetch_data_full_range(token, interval_val, start_utc, end_utc, timezone, INITIAL_FETCH_LIMIT)
 
     if not regular_candles:
-        return schemas.HistoricalDataResponse(candles=[], is_partial=False, message="No data available for this range.", request_id=None, offset=0, total_available=0)
+        # MODIFIED: Removed offset and total_available
+        return schemas.HistoricalDataResponse(candles=[], is_partial=False, message="No data available for this range.", request_id=None)
     
     is_partial = next_cursor_date is not None
     if data_type == schemas.DataType.HEIKIN_ASHI:
         ha_candles = _calculate_heikin_ashi_chunk(regular_candles)
         next_cursor = _create_cursor(start_utc.isoformat(), next_cursor_date.isoformat(), data_type, token, interval_val, timezone, ha_candles[-1]) if is_partial and next_cursor_date else None
-        return schemas.HeikinAshiDataResponse(request_id=next_cursor, candles=ha_candles, is_partial=is_partial, message=f"Loaded initial {len(ha_candles)} bars.", total_available=len(ha_candles), offset=0)
+        # MODIFIED: Removed offset and total_available
+        return schemas.HeikinAshiDataResponse(request_id=next_cursor, candles=ha_candles, is_partial=is_partial, message=f"Loaded initial {len(ha_candles)} bars.")
     else:
         next_cursor = _create_cursor(start_utc.isoformat(), next_cursor_date.isoformat(), data_type, token, interval_val, timezone) if is_partial and next_cursor_date else None
-        return schemas.HistoricalDataResponse(request_id=next_cursor, candles=regular_candles, is_partial=is_partial, message=f"Loaded initial {len(regular_candles)} bars.", total_available=len(regular_candles), offset=0)
+        # MODIFIED: Removed offset and total_available
+        return schemas.HistoricalDataResponse(request_id=next_cursor, candles=regular_candles, is_partial=is_partial, message=f"Loaded initial {len(regular_candles)} bars.")
 
 def get_historical_chunk(request_id: str, offset: Optional[int], limit: int, data_type: schemas.DataType) -> Union[schemas.HistoricalDataChunkResponse, schemas.HeikinAshiDataChunkResponse]:
     try:
@@ -205,14 +208,21 @@ def get_historical_chunk(request_id: str, offset: Optional[int], limit: int, dat
         regular_candles, next_cursor_date = _fetch_data_full_range(cursor_data['token'], interval_val, original_start_utc, next_end_utc, cursor_data['timezone'], limit)
         
     if not regular_candles:
-        return schemas.HistoricalDataChunkResponse(candles=[], offset=0, limit=limit, total_available=0)
+        # MODIFIED: Return a response consistent with the new model, indicating no more data.
+        if data_type == schemas.DataType.HEIKIN_ASHI:
+            return schemas.HeikinAshiDataChunkResponse(candles=[], request_id=None, is_partial=False, limit=limit)
+        else:
+            return schemas.HistoricalDataChunkResponse(candles=[], request_id=None, is_partial=False, limit=limit)
+
 
     is_partial = next_cursor_date is not None
     if data_type == schemas.DataType.HEIKIN_ASHI:
         prev_ha_candle = schemas.HeikinAshiCandle.model_validate_json(cursor_data.get('last_ha_candle')) if 'last_ha_candle' in cursor_data else None
         ha_candles = _calculate_heikin_ashi_chunk(regular_candles, prev_ha_candle)
         next_cursor = _create_cursor(original_start_utc.isoformat(), next_cursor_date.isoformat(), data_type, cursor_data['token'], interval_val, cursor_data['timezone'], ha_candles[-1]) if is_partial and next_cursor_date else None
-        return schemas.HeikinAshiDataChunkResponse(candles=ha_candles, offset=0, limit=limit, total_available=len(ha_candles))
+        # MODIFIED: Return the next cursor and is_partial flag. Removed offset/total_available.
+        return schemas.HeikinAshiDataChunkResponse(candles=ha_candles, request_id=next_cursor, is_partial=is_partial, limit=limit)
     else:
         next_cursor = _create_cursor(original_start_utc.isoformat(), next_cursor_date.isoformat(), data_type, cursor_data['token'], interval_val, cursor_data['timezone']) if is_partial and next_cursor_date else None
-        return schemas.HistoricalDataChunkResponse(candles=regular_candles, offset=0, limit=limit, total_available=len(regular_candles))
+        # MODIFIED: Return the next cursor and is_partial flag. Removed offset/total_available.
+        return schemas.HistoricalDataChunkResponse(candles=regular_candles, request_id=next_cursor, is_partial=is_partial, limit=limit)
