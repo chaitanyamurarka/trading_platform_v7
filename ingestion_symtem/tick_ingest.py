@@ -16,7 +16,7 @@ import signal
 
 # Local imports
 from dtn_iq_client import get_iqfeed_history_conn
-from iqfeed_ingestor import get_latest_timestamp
+from ohlc_ingest import get_latest_timestamp
 from config import settings
 import pyiqfeed as iq
 from influxdb_client import Point, InfluxDBClient, WriteOptions
@@ -71,7 +71,7 @@ class InfluxDBPool:
             client.close()
 
 # --- Aggregation Configuration ---
-AGGREGATION_LEVELS = [1, 10, 1000]
+AGGREGATION_LEVELS = [1, 10,100 ,1000]
 
 # --- OPTIMIZATION: New Vectorized Aggregation ---
 def vectorized_aggregate_ticks_to_bars(ticks: np.ndarray, ticks_per_bar: int, symbol: str) -> Optional[pd.DataFrame]:
