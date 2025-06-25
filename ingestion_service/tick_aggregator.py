@@ -101,7 +101,7 @@ def vectorized_aggregate_ticks_to_bars(ticks: np.ndarray, ticks_per_bar: int, sy
     ).astype({'volume': 'int64'})
 
     # Vectorized Timestamp Conversion
-    timestamps_ns = agg_df['date'].values.astype('datetime64[D]') + agg_df['time'].values.astype('timedelta64[ns]')
+    timestamps_ns = agg_df['date'].values.astype('datetime64[D]') + agg_df['time'].values.astype('timedelta64[us]')
     agg_df['timestamp'] = pd.to_datetime(timestamps_ns, utc=False).tz_localize('America/New_York').tz_convert('UTC')
     agg_df.drop(columns=['date', 'time'], inplace=True)
     agg_df.set_index('timestamp', inplace=True)
@@ -137,25 +137,33 @@ def log_raw_ticks_to_influx(raw_ticks: np.ndarray, symbol: str, write_api):
 
 def process_aggregation_level_vectorized(raw_ticks: np.ndarray, symbol: str, exchange: str, level: int, write_api):
     """Processes a single aggregation level using the vectorized function and writes to InfluxDB."""
-    measurement_name = f"ohlc_{level}tick"
     aggregated_df = vectorized_aggregate_ticks_to_bars(raw_ticks, level, symbol)
     if aggregated_df is None or aggregated_df.empty:
         return "No bars created"
     try:
+        aggregated_df['_measurement'] = aggregated_df.index.strftime(f'ohlc_{symbol}_%Y%m%d_{level}tick')
         aggregated_df['symbol'] = symbol
         aggregated_df['exchange'] = exchange
-        write_api.write(
-            bucket=INFLUX_BUCKET,
-            record=aggregated_df,
-            data_frame_measurement_name=measurement_name,
-            data_frame_tag_columns=['symbol', 'exchange']
-        )
-        logging.info(f"[{symbol}] ==> Initiated write of {len(aggregated_df)} points to {measurement_name}.")
-        return f"Wrote {len(aggregated_df)} points to {measurement_name}"
-    except Exception as e:
-        logging.error(f"[{symbol}] ==> Failed to write to {measurement_name}: {e}", exc_info=True)
-        return f"Error writing to {measurement_name}"
 
+        # FIX: Group by the '_measurement' column and write each group separately
+        grouped_by_measurement = aggregated_df.groupby('_measurement')
+        logging.info(f"Writing {len(aggregated_df)} aggregated points to {len(grouped_by_measurement)} measurements for level {level}tick...")
+
+        for name, group_df in grouped_by_measurement:
+            write_api.write(
+                bucket=INFLUX_BUCKET,
+                record=group_df,
+                data_frame_measurement_name=name, # Use the actual measurement name for each group
+                data_frame_tag_columns=['symbol', 'exchange']
+            )
+        
+        logging.info(f"Write complete for level {level}tick.")
+        return f"Wrote {len(aggregated_df)} points for level {level}tick"
+
+    except Exception as e:
+        logging.error(f"[{symbol}] ==> Failed to write for level {level}tick: {e}", exc_info=True)
+        return f"Error writing for level {level}tick"
+    
 # --- OPTIMIZATION: Central Data Fetching & Processing Logic ---
 def fetch_and_process_data(symbol: str, exchange: str, hist_conn: iq.HistoryConn, start_date: datetime, end_date: datetime, influx_pool: InfluxDBPool):
     """Fetches ticks and processes them using vectorized functions and a thread pool for I/O."""
@@ -213,7 +221,7 @@ def process_symbol_worker(args: tuple):
             end_date = datetime.now(dt_timezone.utc)
             
             # Determine start date based on data in InfluxDB
-            latest_timestamps = [get_latest_timestamp(symbol, f"ohlc_{level}tick") for level in AGGREGATION_LEVELS]
+            latest_timestamps = [get_latest_timestamp(symbol, f"{level}tick") for level in AGGREGATION_LEVELS]
             valid_timestamps = [ts for ts in latest_timestamps if ts is not None]
             
             start_date = min(valid_timestamps) if valid_timestamps else (end_date - timedelta(days=days_to_backfill))
