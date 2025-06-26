@@ -39,9 +39,17 @@ INFLUX_BUCKET = settings.INFLUX_BUCKET
 
 # --- InfluxDB Connection ---
 influx_client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG, timeout=90_000)
-# MODIFICATION: Change the write_api to be SYNCHRONOUS for debugging.
-# This will make writes slower but will raise an error immediately if they fail.
-write_api = influx_client.write_api(write_options=SYNCHRONOUS)
+# MODIFICATION: Using WriteOptions with smaller batch sizes and retry on failure
+write_options = WriteOptions(
+    batch_size=5000,  # Reduced from default to avoid connection timeouts
+    flush_interval=10_000,  # 10 seconds
+    jitter_interval=2_000,  # 2 seconds
+    retry_interval=5_000,  # 5 seconds
+    max_retries=3,
+    max_retry_delay=30_000,
+    exponential_base=2
+)
+write_api = influx_client.write_api(write_options=write_options)
 query_api = influx_client.query_api()
 
 
@@ -105,83 +113,6 @@ def get_latest_timestamp(symbol: str, measurement_suffix: str) -> dt | None:
     except Exception: return None
 
 def format_data_for_influx(dtn_data: np.ndarray, symbol: str, exchange: str, tf_name: str, end_time_utc_cutoff: dt | None = None) -> pd.DataFrame | None:
-    if len(dtn_data) == 0: return None
-    df = pd.DataFrame(dtn_data)
-    if 'time' in dtn_data.dtype.names:
-        df['timestamp'] = pd.to_datetime(df['date'].values.astype('datetime64[D]') + df['time'].values.astype('timedelta64[us]')).tz_localize('America/New_York')
-    else:
-        df['timestamp'] = pd.to_datetime(df['date']).dt.tz_localize('America/New_York')
-    if end_time_utc_cutoff: df = df[df['timestamp'].dt.tz_convert('UTC') <= end_time_utc_cutoff]
-    if df.empty: return None
-    df['_measurement'] = df['timestamp'].dt.strftime(f'ohlc_{symbol}_%Y%m%d_{tf_name}')
-    df.rename(columns={'open_p': 'open', 'high_p': 'high', 'low_p': 'low', 'close_p': 'close', 'prd_vlm': 'volume', 'tot_vlm': 'total_volume'}, inplace=True)
-    if 'volume' not in df.columns and 'total_volume' in df.columns: df['volume'] = df['total_volume']
-    if 'volume' not in df.columns: df['volume'] = 0
-    df['volume'] = df['volume'].astype('int64'); df['symbol'] = symbol; df['exchange'] = exchange
-    df.set_index('timestamp', inplace=True)
-    final_cols = ['open', 'high', 'low', 'close', 'volume', 'symbol', 'exchange', '_measurement']
-    return df[[col for col in final_cols if col in df.columns]]
-
-def fetch_and_store_history(symbol: str, exchange: str, hist_conn: iq.HistoryConn):
-    timeframes = {"1s":{"days":7},"5s":{"days":7},"10s":{"days":7},"15s":{"days":7},"30s":{"days":7},"45s":{"days":7},"1m":{"days":180},"5m":{"days":180},"10m":{"days":180},"15m":{"days":180},"30m":{"days":180},"45m":{"days":180},"1h":{"days":180},"1d":{"days":10000}}
-    last_session_end_utc = get_last_completed_session_end_time_utc()
-
-    timeframes_to_fetch = {
-        "1s":   {"interval": 1,    "type": "s", "days": 7},
-        "5s":   {"interval": 5,    "type": "s", "days": 7},
-        "10s":  {"interval": 10,   "type": "s", "days": 7},
-        "15s":  {"interval": 15,   "type": "s", "days": 7},
-        "30s":  {"interval": 30,   "type": "s", "days": 7},
-        "45s":  {"interval": 45,   "type": "s", "days": 7},
-        "1m":   {"interval": 60,   "type": "s", "days": 180},
-        "5m":   {"interval": 300,  "type": "s", "days": 180},
-        "10m":  {"interval": 600,  "type": "s", "days": 180},
-        "15m":  {"interval": 900,  "type": "s", "days": 180},
-        "30m":  {"interval": 1800, "type": "s", "days": 180},
-        "45m":  {"interval": 2700, "type": "s", "days": 180},
-        "1h":   {"interval": 3600, "type": "s", "days": 180},
-        "1d":   {"interval": 1,    "type": "d", "days": 10000}
-    }
-
-    for tf_name, params_raw in timeframes_to_fetch.items():
-        try:
-            params = {"interval": int(re.sub(r'\D', '', tf_name)), "type": re.sub(r'\d', '', tf_name), **params_raw}
-            latest_timestamp = get_latest_timestamp(symbol, tf_name)
-            dtn_data = None
-            if params['type'] != 'd':
-                start_dt = latest_timestamp or (last_session_end_utc - timedelta(days=params['days']))
-                if start_dt >= last_session_end_utc: continue
-                dtn_data = hist_conn.request_bars_in_period(ticker=symbol, interval_len=params['interval'], interval_type=params['type'], bgn_prd=start_dt, end_prd=last_session_end_utc, ascend=True)
-            else:
-                days = params['days'] if not latest_timestamp else (dt.now(timezone.utc) - latest_timestamp).days + 1
-                if days <= 0: continue
-                dtn_data = hist_conn.request_daily_data(ticker=symbol, num_days=days, ascend=True)
-
-            if dtn_data is not None and len(dtn_data) > 0:
-                influx_df = format_data_for_influx(dtn_data, symbol, exchange, tf_name, last_session_end_utc)
-                if influx_df is not None and not influx_df.empty:
-                    # FIX: Group by the '_measurement' column and write each group separately
-                    grouped_by_measurement = influx_df.groupby('_measurement')
-                    logging.info(f"Writing {len(influx_df)} points to {len(grouped_by_measurement)} measurements for timeframe '{tf_name}'...")
-                    for name, group_df in grouped_by_measurement:
-                        write_api.write(
-                            bucket=INFLUX_BUCKET,
-                            record=group_df,
-                            data_frame_measurement_name=name, # Use the actual measurement name for each group
-                            data_frame_tag_columns=['symbol', 'exchange']
-                        )
-                    logging.info("Write complete.")
-        except Exception as e:
-            logging.error(f"Error fetching {tf_name} for {symbol}: {e}", exc_info=True)
-
-
-def format_data_for_influx(
-    dtn_data: np.ndarray,
-    symbol: str,
-    exchange: str,
-    tf_name: str,
-    end_time_utc_cutoff: dt | None = None
-) -> pd.DataFrame | None:
     """
     Converts NumPy array from pyiqfeed to a Pandas DataFrame ready for InfluxDB,
     with a '_measurement' column based on the timestamp of each record.
@@ -234,6 +165,121 @@ def format_data_for_influx(
     final_cols = ['open', 'high', 'low', 'close', 'volume', 'symbol', 'exchange', '_measurement']
     return df[[col for col in final_cols if col in df.columns]]
 
+def write_data_in_chunks(influx_df: pd.DataFrame, chunk_size: int = 1000, max_retries: int = 3):
+    """
+    Write data to InfluxDB in smaller chunks to avoid connection timeouts.
+    Includes retry logic for failed chunks.
+    """
+    grouped_by_measurement = influx_df.groupby('_measurement')
+    total_measurements = len(grouped_by_measurement)
+    total_points = len(influx_df)
+    
+    logging.info(f"Writing {total_points} points to {total_measurements} measurements...")
+    
+    successful_writes = 0
+    failed_measurements = []
+    
+    for name, group_df in grouped_by_measurement:
+        # For large groups, write in chunks
+        if len(group_df) > chunk_size:
+            chunks = [group_df[i:i+chunk_size] for i in range(0, len(group_df), chunk_size)]
+            logging.debug(f"Splitting measurement {name} into {len(chunks)} chunks")
+            
+            for i, chunk in enumerate(chunks):
+                retry_count = 0
+                while retry_count < max_retries:
+                    try:
+                        write_api.write(
+                            bucket=INFLUX_BUCKET,
+                            record=chunk,
+                            data_frame_measurement_name=name,
+                            data_frame_tag_columns=['symbol', 'exchange']
+                        )
+                        successful_writes += len(chunk)
+                        break
+                    except Exception as e:
+                        retry_count += 1
+                        if retry_count >= max_retries:
+                            logging.error(f"Failed to write chunk {i+1}/{len(chunks)} of {name} after {max_retries} retries: {e}")
+                            failed_measurements.append((name, len(chunk)))
+                        else:
+                            logging.warning(f"Retry {retry_count}/{max_retries} for chunk {i+1}/{len(chunks)} of {name}")
+                            time.sleep(2 ** retry_count)  # Exponential backoff
+        else:
+            # For smaller groups, write as single batch
+            retry_count = 0
+            while retry_count < max_retries:
+                try:
+                    write_api.write(
+                        bucket=INFLUX_BUCKET,
+                        record=group_df,
+                        data_frame_measurement_name=name,
+                        data_frame_tag_columns=['symbol', 'exchange']
+                    )
+                    successful_writes += len(group_df)
+                    break
+                except Exception as e:
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        logging.error(f"Failed to write {name} after {max_retries} retries: {e}")
+                        failed_measurements.append((name, len(group_df)))
+                    else:
+                        logging.warning(f"Retry {retry_count}/{max_retries} for {name}")
+                        time.sleep(2 ** retry_count)
+    
+    logging.info(f"Write complete. Successfully wrote {successful_writes}/{total_points} points.")
+    
+    if failed_measurements:
+        logging.error(f"Failed to write {len(failed_measurements)} measurements:")
+        for measurement, count in failed_measurements:
+            logging.error(f"  - {measurement}: {count} points")
+    
+    return successful_writes, failed_measurements
+
+def fetch_and_store_history(symbol: str, exchange: str, hist_conn: iq.HistoryConn):
+    timeframes_to_fetch = {
+        "1s":   {"interval": 1,    "type": "s", "days": 7},
+        "5s":   {"interval": 5,    "type": "s", "days": 7},
+        "10s":  {"interval": 10,   "type": "s", "days": 7},
+        "15s":  {"interval": 15,   "type": "s", "days": 7},
+        "30s":  {"interval": 30,   "type": "s", "days": 7},
+        "45s":  {"interval": 45,   "type": "s", "days": 7},
+        "1m":   {"interval": 60,   "type": "s", "days": 180},
+        "5m":   {"interval": 300,  "type": "s", "days": 180},
+        "10m":  {"interval": 600,  "type": "s", "days": 180},
+        "15m":  {"interval": 900,  "type": "s", "days": 180},
+        "30m":  {"interval": 1800, "type": "s", "days": 180},
+        "45m":  {"interval": 2700, "type": "s", "days": 180},
+        "1h":   {"interval": 3600, "type": "s", "days": 180},
+        "1d":   {"interval": 1,    "type": "d", "days": 10000}
+    }
+    
+    last_session_end_utc = get_last_completed_session_end_time_utc()
+
+    for tf_name, params_raw in timeframes_to_fetch.items():
+        try:
+            params = {"interval": int(re.sub(r'\D', '', tf_name)), "type": re.sub(r'\d', '', tf_name), **params_raw}
+            latest_timestamp = get_latest_timestamp(symbol, tf_name)
+            dtn_data = None
+            
+            if params['type'] != 'd':
+                start_dt = latest_timestamp or (last_session_end_utc - timedelta(days=params['days']))
+                if start_dt >= last_session_end_utc: continue
+                dtn_data = hist_conn.request_bars_in_period(ticker=symbol, interval_len=params['interval'], interval_type=params['type'], bgn_prd=start_dt, end_prd=last_session_end_utc, ascend=True)
+            else:
+                days = params['days'] if not latest_timestamp else (dt.now(timezone.utc) - latest_timestamp).days + 1
+                if days <= 0: continue
+                dtn_data = hist_conn.request_daily_data(ticker=symbol, num_days=days, ascend=True)
+
+            if dtn_data is not None and len(dtn_data) > 0:
+                influx_df = format_data_for_influx(dtn_data, symbol, exchange, tf_name, last_session_end_utc)
+                if influx_df is not None and not influx_df.empty:
+                    # Use chunked writing with retry logic
+                    write_data_in_chunks(influx_df, chunk_size=1000 if tf_name == '1d' else 5000)
+                    
+        except Exception as e:
+            logging.error(f"Error fetching {tf_name} for {symbol}: {e}", exc_info=True)
+
 def daily_update(symbols_to_update: list, exchange: str):
     """
     Performs the daily update, respecting trading hours.
@@ -249,9 +295,22 @@ def daily_update(symbols_to_update: list, exchange: str):
         logging.error("Could not get IQFeed connection. Aborting daily update.")
         return
 
-    with iq.ConnConnector([hist_conn]):
-        for symbol in symbols_to_update:
-            fetch_and_store_history(symbol, exchange, hist_conn)
+    try:
+        with iq.ConnConnector([hist_conn]):
+            for symbol in symbols_to_update:
+                try:
+                    logging.info(f"Processing symbol: {symbol}")
+                    fetch_and_store_history(symbol, exchange, hist_conn)
+                except Exception as e:
+                    logging.error(f"Failed to process symbol {symbol}: {e}", exc_info=True)
+                    # Continue with next symbol even if one fails
+                    continue
+    finally:
+        # Ensure write_api is flushed before closing
+        try:
+            write_api.flush()
+        except Exception as e:
+            logging.error(f"Error flushing write API: {e}")
 
     logging.info("--- Daily Update Process Finished ---")
 
@@ -292,6 +351,11 @@ if __name__ == '__main__':
     except (KeyboardInterrupt, SystemExit):
         logging.info("Scheduler stopped. Shutting down...")
     finally:
+        try:
+            write_api.close()
+        except Exception as e:
+            logging.error(f"Error closing write API: {e}")
+        
         if influx_client:
             influx_client.close()
             logging.info("InfluxDB client closed.")
