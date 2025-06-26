@@ -21,6 +21,7 @@ class Interval(str, Enum):
     # Tick-based intervals
     TICK_1 = "1tick"
     TICK_10 = "10tick"
+    TICK_100 = "100tick"
     TICK_1000 = "1000tick"
     
     # Time-based intervals
