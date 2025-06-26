@@ -43,24 +43,32 @@
                     <div class="mb-4">
                         <label for="interval" class="text-sm">Interval</label>
                         <select id="interval" class="select select-bordered select-sm w-full">
+                            <!-- <optgroup label="Tick-Based">
                                 <option value="1tick">1 Tick</option>
                                 <option value="10tick">10 Ticks</option>
                                 <option value="100tick">100 Ticks</option>
                                 <option value="1000tick">1000 Ticks</option>
+                            </optgroup> -->
+                            <optgroup label="Seconds">
                                 <option value="1s">1 Second</option>
                                 <option value="5s">5 Seconds</option>
                                 <option value="10s">10 Seconds</option>
                                 <option value="15s">15 Seconds</option>
                                 <option value="30s">30 Seconds</option>
                                 <option value="45s">45 Seconds</option>
+                            </optgroup>
+                            <optgroup label="Minutes">
                                 <option value="1m" selected>1 Minute</option>
                                 <option value="5m">5 Minutes</option>
                                 <option value="10m">10 Minutes</option>
                                 <option value="15m">15 Minutes</option>
                                 <option value="30m">30 Minutes</option>
                                 <option value="45m">45 Minutes</option>
+                            </optgroup>
+                            <optgroup label="Hours & Days">
                                 <option value="1h">1 Hour</option>
                                 <option value="1d">1 Day</option>
+                            </optgroup>
                         </select>
                     </div>
                     <div class="mb-4">
