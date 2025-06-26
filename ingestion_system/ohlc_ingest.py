@@ -238,19 +238,19 @@ def write_data_in_chunks(influx_df: pd.DataFrame, chunk_size: int = 1000, max_re
 
 def fetch_and_store_history(symbol: str, exchange: str, hist_conn: iq.HistoryConn):
     timeframes_to_fetch = {
-        "1s":   {"interval": 1,    "type": "s", "days": 7},
-        "5s":   {"interval": 5,    "type": "s", "days": 7},
-        "10s":  {"interval": 10,   "type": "s", "days": 7},
-        "15s":  {"interval": 15,   "type": "s", "days": 7},
-        "30s":  {"interval": 30,   "type": "s", "days": 7},
-        "45s":  {"interval": 45,   "type": "s", "days": 7},
-        "1m":   {"interval": 60,   "type": "s", "days": 180},
-        "5m":   {"interval": 300,  "type": "s", "days": 180},
-        "10m":  {"interval": 600,  "type": "s", "days": 180},
-        "15m":  {"interval": 900,  "type": "s", "days": 180},
-        "30m":  {"interval": 1800, "type": "s", "days": 180},
-        "45m":  {"interval": 2700, "type": "s", "days": 180},
-        "1h":   {"interval": 3600, "type": "s", "days": 180},
+        "1s":   {"interval": 1,    "type": "s", "days": 10000},
+        "5s":   {"interval": 5,    "type": "s", "days": 10000},
+        "10s":  {"interval": 10,   "type": "s", "days": 10000},
+        "15s":  {"interval": 15,   "type": "s", "days": 10000},
+        "30s":  {"interval": 30,   "type": "s", "days": 10000},
+        "45s":  {"interval": 45,   "type": "s", "days": 10000},
+        "1m":   {"interval": 60,   "type": "s", "days": 10000},
+        "5m":   {"interval": 300,  "type": "s", "days": 10000},
+        "10m":  {"interval": 600,  "type": "s", "days": 10000},
+        "15m":  {"interval": 900,  "type": "s", "days": 10000},
+        "30m":  {"interval": 1800, "type": "s", "days": 10000},
+        "45m":  {"interval": 2700, "type": "s", "days": 10000},
+        "1h":   {"interval": 3600, "type": "s", "days": 10000},
         "1d":   {"interval": 1,    "type": "d", "days": 10000}
     }
     
